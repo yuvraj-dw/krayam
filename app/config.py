@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
+    # Natural-language SMS (Gemini via OpenAI-compatible endpoint)
+    LLM_ENABLED: bool = False
+    LLM_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    LLM_API_KEY: str = ""
+    LLM_MODEL: str = "gemini-2.0-flash"
+    LLM_TIMEOUT_SECONDS: float = 8.0
+
 
 @lru_cache
 def get_settings() -> Settings:
