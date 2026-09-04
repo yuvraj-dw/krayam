@@ -6,7 +6,7 @@ from sqlalchemy import Boolean, DateTime, Enum, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.database import Base, enum_values
 
 
 class Farmer(Base):
@@ -41,7 +41,9 @@ class OTP(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     phone: Mapped[str] = mapped_column(String(15), nullable=False, index=True)
     code: Mapped[str] = mapped_column(String(10), nullable=False)
-    purpose: Mapped[OTPPurpose] = mapped_column(Enum(OTPPurpose), nullable=False)
+    purpose: Mapped[OTPPurpose] = mapped_column(
+        Enum(OTPPurpose, values_callable=enum_values), nullable=False
+    )
     attempts: Mapped[int] = mapped_column(default=0)
     max_attempts: Mapped[int] = mapped_column(default=3)
     is_used: Mapped[bool] = mapped_column(Boolean, default=False)

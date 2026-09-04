@@ -3,6 +3,7 @@ import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.exceptions import ConflictError, NotFoundError
 from app.models.centre import Centre, CentreCrop
@@ -31,14 +32,20 @@ class CentreService:
         return centre
 
     async def get_by_id(self, db: AsyncSession, centre_id: uuid.UUID) -> Centre:
-        result = await db.execute(select(Centre).where(Centre.id == centre_id))
+        result = await db.execute(
+            select(Centre)
+            .where(Centre.id == centre_id)
+            .options(selectinload(Centre.crops))
+        )
         centre = result.scalar_one_or_none()
         if not centre:
             raise NotFoundError("Centre not found")
         return centre
 
     async def get_by_code(self, db: AsyncSession, code: str) -> Centre | None:
-        result = await db.execute(select(Centre).where(Centre.code == code))
+        result = await db.execute(
+            select(Centre).where(Centre.code == code).options(selectinload(Centre.crops))
+        )
         return result.scalar_one_or_none()
 
     async def list(
@@ -48,7 +55,7 @@ class CentreService:
         crop: str | None = None,
         active_only: bool = True,
     ) -> list[Centre]:
-        query = select(Centre)
+        query = select(Centre).options(selectinload(Centre.crops))
         if active_only:
             query = query.where(Centre.is_active.is_(True))
         if crop:

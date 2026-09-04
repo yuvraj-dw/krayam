@@ -6,7 +6,7 @@ from sqlalchemy import Date, DateTime, Enum, ForeignKey, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.database import Base, enum_values
 
 
 class BookingStatus(str, enum.Enum):
@@ -63,7 +63,9 @@ class Booking(Base):
     unit: Mapped[str] = mapped_column(String(20), default="quintal")
     expected_date: Mapped[date] = mapped_column(Date, nullable=False)
     status: Mapped[BookingStatus] = mapped_column(
-        Enum(BookingStatus), default=BookingStatus.PENDING, nullable=False
+        Enum(BookingStatus, values_callable=enum_values),
+        default=BookingStatus.PENDING,
+        nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

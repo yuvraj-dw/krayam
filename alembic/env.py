@@ -1,16 +1,15 @@
 import asyncio
 from logging.config import fileConfig
 
-from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.config import get_settings
-from app.database import Base
-
 # Import all models so Alembic can detect them
 import app.models  # noqa: F401
+from alembic import context
+from app.config import get_settings
+from app.database import Base
 
 config = context.config
 settings = get_settings()
@@ -47,6 +46,8 @@ async def run_async_migrations() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # asyncpg prepared statements break behind PgBouncer/session poolers
+        connect_args={"statement_cache_size": 0},
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

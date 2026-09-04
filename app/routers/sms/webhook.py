@@ -258,8 +258,12 @@ async def handle_incoming_sms(request: Request) -> dict[str, str]:
         reply = await _handle_command(phone, text, session)
         await db.commit()
 
-    # Send reply
+    # Send reply (best-effort: a delivery failure must not make the webhook
+    # error, or SMS Gate would retry the whole incoming webhook and duplicate it)
     if reply:
-        await _send_reply(phone, reply)
+        try:
+            await _send_reply(phone, reply)
+        except Exception as e:  # noqa: BLE001
+            logger.error("Failed to send SMS reply to %s: %s", phone, e)
 
     return {"status": "ok"}

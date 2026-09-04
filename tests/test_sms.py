@@ -1,4 +1,14 @@
 import pytest
+from sqlalchemy import text
+
+from app.database import engine
+
+
+@pytest.fixture(autouse=True)
+async def clean_sms_tables():
+    async with engine.begin() as conn:
+        await conn.execute(text("TRUNCATE sms_messages, sms_sessions RESTART IDENTITY CASCADE"))
+    yield
 
 
 @pytest.mark.anyio

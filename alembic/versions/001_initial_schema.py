@@ -4,7 +4,8 @@ Revision ID: 001
 Revises:
 Create Date: 2026-09-04
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
@@ -12,35 +13,55 @@ from sqlalchemy.dialects import postgresql
 from alembic import op
 
 revision: str = "001"
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     # Enums
     booking_status = postgresql.ENUM(
-        "pending", "confirmed", "checked_in", "processing",
-        "completed", "cancelled", "no_show", "rescheduled", "expired",
-        name="bookingstatus", create_type=False,
+        "pending",
+        "confirmed",
+        "checked_in",
+        "processing",
+        "completed",
+        "cancelled",
+        "no_show",
+        "rescheduled",
+        "expired",
+        name="bookingstatus",
+        create_type=False,
     )
     booking_status.create(op.get_bind(), checkfirst=True)
 
     queue_status = postgresql.ENUM(
-        "waiting", "called", "processing", "completed", "no_show",
-        name="queuestatus", create_type=False,
+        "waiting",
+        "called",
+        "processing",
+        "completed",
+        "no_show",
+        name="queuestatus",
+        create_type=False,
     )
     queue_status.create(op.get_bind(), checkfirst=True)
 
     payment_status = postgresql.ENUM(
-        "initiated", "pending_verification", "confirmed", "failed", "cancelled",
-        name="paymentstatus", create_type=False,
+        "initiated",
+        "pending_verification",
+        "confirmed",
+        "failed",
+        "cancelled",
+        name="paymentstatus",
+        create_type=False,
     )
     payment_status.create(op.get_bind(), checkfirst=True)
 
     otp_purpose = postgresql.ENUM(
-        "login", "register",
-        name="otppurpose", create_type=False,
+        "login",
+        "register",
+        name="otppurpose",
+        create_type=False,
     )
     otp_purpose.create(op.get_bind(), checkfirst=True)
 
@@ -179,7 +200,11 @@ def upgrade() -> None:
         "payments",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("payment_id", sa.String(50), unique=True, nullable=False),
-        sa.Column("procurement_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("procurements.id")),
+        sa.Column(
+            "procurement_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("procurements.id"),
+        ),
         sa.Column("farmer_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("farmers.id")),
         sa.Column("quantity", sa.Numeric(10, 2), nullable=False),
         sa.Column("rate", sa.Numeric(10, 2), nullable=False),

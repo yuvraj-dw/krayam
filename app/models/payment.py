@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, Enum, ForeignKey, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.database import Base, enum_values
 
 
 class PaymentStatus(str, enum.Enum):
@@ -30,7 +30,9 @@ class Payment(Base):
     rate: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     status: Mapped[PaymentStatus] = mapped_column(
-        Enum(PaymentStatus), default=PaymentStatus.INITIATED, nullable=False
+        Enum(PaymentStatus, values_callable=enum_values),
+        default=PaymentStatus.INITIATED,
+        nullable=False,
     )
     verified_by: Mapped[str | None] = mapped_column(String(255))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

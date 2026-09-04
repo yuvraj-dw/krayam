@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, Enum, ForeignKey, Integer, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.database import Base
+from app.database import Base, enum_values
 
 
 class QueueStatus(str, enum.Enum):
@@ -25,7 +25,9 @@ class QueueEntry(Base):
     centre_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("centres.id"))
     position: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[QueueStatus] = mapped_column(
-        Enum(QueueStatus), default=QueueStatus.WAITING, nullable=False
+        Enum(QueueStatus, values_callable=enum_values),
+        default=QueueStatus.WAITING,
+        nullable=False,
     )
     checked_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     called_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
