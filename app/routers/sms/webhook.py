@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import async_session_factory
 from app.exceptions import ValidationError
 from app.models.booking import BookingStatus
@@ -19,6 +20,7 @@ from app.schemas.procurement import BookingReschedule
 from app.services.booking import booking_service
 from app.services.centre import centre_service
 from app.services.farmer import farmer_service
+from app.services.intent import IntentResult, intent_service
 from app.services.mandi import mandi_service
 from app.services.queue import queue_service
 from app.services.recommendation import recommendation_service
@@ -610,12 +612,93 @@ async def _handle_command(
             f"Status: {booking.status.value}."
         )
 
-    # Not a recognised command. Prompt again if we're mid-conversation, but stay
-    # silent otherwise — this is likely a notice from e.g. Jio/your carrier that
-    # never deserves a reply (and lets any new number still register via REGISTER).
+    # Not a recognised command. Try natural-language parsing.
+    reply = await _try_natural_language(db, session, text, phone)
+    if reply:
+        return reply
+    # LLM unavailable/disabled: stay silent for carrier service notices, but
+    # still prompt if we are mid-conversation.
     if session.state and session.state != "idle":
         return "Sorry, I didn't understand that. Send HELP for available commands."
     return None
+
+
+# The intent values produced by parse_intent_json are the lowercase set from
+# ALLOWED_INTENTS ("book", "status", "history", "payment", "queue", "cancel",
+# "reschedule", "register", "centre", "help", "unknown").
+
+
+async def _try_natural_language(
+    db: AsyncSession, session: SMSSession, text: str, phone: str
+) -> str | None:
+    """Try to interpret a free-form message as a platform request via the LLM.
+
+    Returns a reply string, or None when nothing should be sent.
+    - LLM feature off (LLM_ENABLED=false): stay silent (legacy carrier-notice
+      behaviour; no network is ever touched in this mode).
+    - LLM on but unavailable/error, or intent == "unknown": reply with the
+      helpful HELP error (the user-chosen fallback).
+    """
+    settings = get_settings()
+    if not settings.LLM_ENABLED:
+        return None
+
+    result = await intent_service.parse(text)
+    if result is None:
+        # LLM call failed, timed out, or produced unparseable JSON.
+        return "Sorry, I couldn't understand. Send HELP for the list of commands."
+
+    error_reply = "Sorry, I couldn't understand. Send HELP for the list of commands."
+    intent = result.intent
+    if intent == "book":
+        return await _nl_begin_booking(db, session, phone, result)
+    if intent in ("status", "queue", "payment", "history", "cancel",
+                  "reschedule", "register", "centre", "help"):
+        return await _handle_command(db, phone, intent.upper(), session)
+    return error_reply
+
+
+async def _nl_begin_booking(
+    db: AsyncSession, session: SMSSession, phone: str, result: IntentResult
+) -> str:
+    """Pre-fill the booking flow from the LLM result, resuming at the first
+    missing field (plan: never guess critical data; ask when unsure)."""
+    ctx: dict = {}
+    if result.crop:
+        ctx["crop"] = result.crop
+    if result.quantity is not None:
+        ctx["quantity"] = result.quantity
+    if result.expected_date:
+        ctx["expected_date"] = result.expected_date
+
+    farmer = await _get_farmer(db, phone)
+    if not farmer:
+        session.state = "bk_crop"
+        session.context = {}
+        return "To book, first register. Send REGISTER."
+
+    if not result.crop:
+        session.state = "bk_crop"
+        session.context = ctx
+        return "Enter the crop name (e.g. Soybean)."
+    if result.quantity is None:
+        session.state = "bk_quantity"
+        session.context = ctx
+        return "Enter the quantity in quintals (e.g. 12)."
+    if not result.expected_date:
+        session.state = "bk_date"
+        session.context = ctx
+        return "Enter the expected procurement date in DD-MM-YYYY (e.g. 15-09-2026)."
+
+    # All core fields present: resume at the bk_date step with a DD-MM-YYYY
+    # reply so the existing handler runs recommendation and moves on to centre
+    # and slot selection. The model returns an ISO date; convert it here.
+    d = date.fromisoformat(result.expected_date)
+    session.context = {**ctx, "crop": result.crop, "quantity": result.quantity}
+    reply = await _handle_booking_flow(db, session, d.strftime("%d-%m-%Y"), phone)
+    if not reply:
+        return "Could not complete booking. Send BOOK to start again."
+    return reply
 
 
 @router.post("/sms/incoming")

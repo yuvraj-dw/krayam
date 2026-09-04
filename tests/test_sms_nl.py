@@ -1,0 +1,141 @@
+import pytest
+from sqlalchemy import delete
+
+from app.database import engine
+from app.models.farmer import Farmer
+from app.models.sms import SMSSession
+from app.services.intent import IntentResult
+
+TEST_PHONE = "1999888777"
+
+
+@pytest.fixture(autouse=True)
+async def clean_nl_farmer():
+    async with engine.begin() as conn:
+        await conn.execute(delete(SMSSession).where(SMSSession.phone == TEST_PHONE))
+        await conn.execute(delete(Farmer).where(Farmer.phone == TEST_PHONE))
+    yield
+    async with engine.begin() as conn:
+        await conn.execute(delete(SMSSession).where(SMSSession.phone == TEST_PHONE))
+        await conn.execute(delete(Farmer).where(Farmer.phone == TEST_PHONE))
+
+
+@pytest.mark.anyio
+async def test_nl_unknown_message_returns_error_reply(client, monkeypatch):
+    from app.services.intent import intent_service
+
+    class _S:
+        LLM_ENABLED = True
+
+    monkeypatch.setattr("app.routers.sms.webhook.get_settings", lambda: _S())
+
+    sent = []
+
+    async def fake_send(phone, msg):
+        sent.append((phone, msg))
+
+    monkeypatch.setattr("app.routers.sms.webhook._send_reply", fake_send)
+
+    async def unknown(text):
+        return IntentResult(intent="unknown")
+
+    monkeypatch.setattr(intent_service, "parse", unknown)
+
+    response = await client.post(
+        "/sms/incoming",
+        json={"message": "Mujhe kuch samajh nahi aaya", "sender": TEST_PHONE,
+              "messageId": "nl-001"},
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
+    assert len(sent) == 1
+    assert "HELP" in sent[0][1]
+
+
+@pytest.mark.anyio
+async def test_nl_llm_error_returns_error_reply(client, monkeypatch):
+    from app.services.intent import intent_service
+
+    class _S:
+        LLM_ENABLED = True
+
+    monkeypatch.setattr("app.routers.sms.webhook.get_settings", lambda: _S())
+
+    sent = []
+
+    async def fake_send(phone, msg):
+        sent.append((phone, msg))
+
+    monkeypatch.setattr("app.routers.sms.webhook._send_reply", fake_send)
+    async def fail_parse(text):
+        return None
+
+    monkeypatch.setattr(intent_service, "parse", fail_parse)
+
+    response = await client.post(
+        "/sms/incoming",
+        json={"message": "gibberish ???", "sender": TEST_PHONE, "messageId": "nl-004"},
+    )
+    assert response.status_code == 200
+    assert len(sent) == 1
+    assert "HELP" in sent[0][1]
+
+
+@pytest.mark.anyio
+async def test_nl_disabled_is_silent(client, monkeypatch):
+    class _S:
+        LLM_ENABLED = False
+
+    monkeypatch.setattr("app.routers.sms.webhook.get_settings", lambda: _S())
+
+    sent = []
+
+    async def fake_send(phone, msg):
+        sent.append((phone, msg))
+
+    monkeypatch.setattr("app.routers.sms.webhook._send_reply", fake_send)
+
+    response = await client.post(
+        "/sms/incoming",
+        json={"message": "some carrier notice", "sender": TEST_PHONE,
+              "messageId": "nl-003"},
+    )
+    assert response.status_code == 200
+    assert sent == []
+
+
+@pytest.mark.anyio
+async def test_nl_book_intent_unregistered_asks_register(client, monkeypatch):
+    from app.services.intent import intent_service
+
+    class _S:
+        LLM_ENABLED = True
+
+    monkeypatch.setattr("app.routers.sms.webhook.get_settings", lambda: _S())
+
+    sent = []
+
+    async def fake_send(phone, msg):
+        sent.append((phone, msg))
+
+    monkeypatch.setattr("app.routers.sms.webhook._send_reply", fake_send)
+
+    async def book_result(text):
+        return IntentResult(
+            intent="book", crop="Soybean", quantity=30.0, unit="quintal",
+            expected_date="2026-09-15", confidence=0.95,
+            missing=[], needs_clarification=False,
+        )
+
+    monkeypatch.setattr(intent_service, "parse", book_result)
+
+    response = await client.post(
+        "/sms/incoming",
+        json={"message": "Mujhe 30 quintal soybean bechna hai",
+              "sender": TEST_PHONE, "messageId": "nl-002"},
+    )
+    assert response.status_code == 200
+    # Farmer for the test phone is deleted in the fixture, so the flow must
+    # ask them to register first.
+    assert len(sent) == 1
+    assert "register" in sent[0][1].lower()
