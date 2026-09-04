@@ -1,4 +1,5 @@
 import logging
+import re
 
 import httpx
 
@@ -7,6 +8,18 @@ from app.exceptions import SMSGateError
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def to_e164(phone: str, default_cc: str = "91") -> str:
+    """Ensure the recipient is in E.164 format for SMS Gate.
+
+    SMS Gate validates phoneNumbers against E.164. Our phone flow uses a
+    local 10-digit Indian format, so prefix the country code here.
+    """
+    cleaned = re.sub(r"[\s\-\(\)+]", "", phone)
+    if cleaned.startswith(default_cc) and len(cleaned) == 12:
+        return f"+{cleaned}"
+    return f"+{default_cc}{cleaned}"
 
 
 class SMSGateClient:
@@ -21,22 +34,29 @@ class SMSGateClient:
         self.auth = (settings.SMS_GATE_USERNAME, settings.SMS_GATE_PASSWORD)
 
     async def send_sms(self, to: str, message: str) -> str:
-        """Send an outgoing SMS. Returns the SMS Gate message ID."""
+        """Send an outgoing SMS via SMS Gate cloud API. Returns message id."""
         async with httpx.AsyncClient() as client:
             try:
                 response = await client.post(
                     f"{self.base_url}/messages",
                     auth=self.auth,
-                    json={"to": to, "message": message},
+                    json={
+                        "phoneNumbers": [to_e164(to)],
+                        "textMessage": {"text": message},
+                    },
                     timeout=30.0,
                 )
                 response.raise_for_status()
                 data = response.json()
-                message_id = data.get("id", "")
+                message_id = data.get("id") or data.get("messageId") or ""
                 logger.info("SMS sent to %s, message_id=%s", to, message_id)
                 return message_id
             except httpx.HTTPStatusError as e:
-                logger.error("SMS Gate HTTP error: %s", e.response.status_code)
+                logger.error(
+                    "SMS Gate HTTP error: %s body=%s",
+                    e.response.status_code,
+                    e.response.text,
+                )
                 raise SMSGateError(f"SMS delivery failed: {e.response.status_code}") from e
             except httpx.RequestError as e:
                 logger.error("SMS Gate connection error: %s", e)
