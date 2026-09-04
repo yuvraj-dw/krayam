@@ -115,34 +115,31 @@ async def _handle_registration_flow(session: SMSSession, text: str, phone: str) 
     state = session.state
 
     if state == "awaiting_name":
-        ctx["name"] = text.strip()
+        session.context = {**ctx, "name": text.strip()}
         session.state = "awaiting_pincode"
-        session.context = ctx
         return "Enter your 6-digit pincode."
 
     if state == "awaiting_pincode":
         pincode = text.strip()
         if not pincode.isdigit() or len(pincode) != 6:
             return "Please enter a valid 6-digit pincode."
-        ctx["pincode"] = pincode
+        session.context = {**ctx, "pincode": pincode}
         session.state = "awaiting_village"
-        session.context = ctx
         return "Enter your village name."
 
     if state == "awaiting_village":
-        ctx["village"] = text.strip()
+        session.context = {**ctx, "village": text.strip()}
         session.state = "awaiting_district"
-        session.context = ctx
         return "Enter your district."
 
     if state == "awaiting_district":
-        ctx["district"] = text.strip()
+        session.context = {**ctx, "district": text.strip()}
         session.state = "confirm_registration"
-        session.context = ctx
-        name = ctx.get("name", "")
-        village = ctx.get("village", "")
-        district = ctx.get("district", "")
-        pincode = ctx.get("pincode", "")
+        updated = session.context
+        name = updated.get("name", "")
+        village = updated.get("village", "")
+        district = updated.get("district", "")
+        pincode = updated.get("pincode", "")
         return (
             f"Please confirm your details:\n"
             f"Name: {name}\n"
