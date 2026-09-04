@@ -1,5 +1,7 @@
+import contextlib
 import logging
-from datetime import datetime, timedelta, timezone
+import uuid
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -7,9 +9,27 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
+from app.exceptions import ValidationError
+from app.models.booking import BookingStatus
+from app.models.payment import Payment
+from app.models.procurement import Procurement
+from app.models.queue import QueueEntry
 from app.models.sms import SMSMessage, SMSSession
+from app.schemas.procurement import BookingReschedule
+from app.services.booking import booking_service
+from app.services.centre import centre_service
 from app.services.farmer import farmer_service
 from app.services.mandi import mandi_service
+from app.services.queue import queue_service
+from app.services.recommendation import recommendation_service
+from app.services.slot import slot_service
+from app.services.sms_format import (
+    format_currency,
+    format_date,
+    parse_date,
+    parse_int_selection,
+    parse_positive_float,
+)
 from app.services.sms_gate import sms_gate_client
 from app.utils.phone import normalize_phone
 
@@ -175,7 +195,181 @@ async def _handle_registration_flow(session: SMSSession, text: str, phone: str) 
     return None
 
 
-async def _handle_command(phone: str, text: str, session: SMSSession) -> str | None:
+async def _get_farmer(db: AsyncSession, phone: str):
+    return await farmer_service.get_by_phone(db, phone)
+
+
+async def _get_owned_booking(db: AsyncSession, phone: str, code: str):
+    """Fetch a booking by human code, returning (booking, farmer). Returns
+    (None, farmer) when the booking is missing or belongs to another farmer."""
+    farmer = await _get_farmer(db, phone)
+    if not farmer:
+        return None, None
+    booking = await booking_service.get_by_code(db, code)
+    if booking is None or booking.farmer_id != farmer.id:
+        return None, farmer
+    return booking, farmer
+
+
+async def _get_centre_name(db: AsyncSession, centre_id) -> str:
+    if not centre_id:
+        return "N/A"
+    try:
+        return (await centre_service.get_by_id(db, centre_id)).name
+    except Exception:  # noqa: BLE001
+        return "N/A"
+
+
+async def _handle_booking_flow(
+    db: AsyncSession, session: SMSSession, text: str, phone: str
+) -> str | None:
+    """Handle the multi-step SMS booking conversation (states prefixed bk_)."""
+    ctx = session.context or {}
+    state = session.state
+
+    if state == "bk_crop":
+        crop = text.strip()
+        if not crop or len(crop) > 100:
+            return "Please enter a valid crop name (e.g. Soybean)."
+        session.context = {**ctx, "crop": crop}
+        session.state = "bk_quantity"
+        session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+        return "Enter the quantity in quintals (e.g. 12)."
+
+    if state == "bk_quantity":
+        qty = parse_positive_float(text)
+        if qty is None:
+            return "Please enter a valid quantity in quintals (e.g. 12)."
+        session.context = {**ctx, "quantity": qty}
+        session.state = "bk_date"
+        return "Enter the expected procurement date in DD-MM-YYYY (e.g. 15-09-2026)."
+
+    if state == "bk_date":
+        d = parse_date(text)
+        if d is None or d < date.today():
+            return "Please enter a valid future date in DD-MM-YYYY (e.g. 15-09-2026)."
+        farmer = await _get_farmer(db, phone)
+        if not farmer:
+            return "You must register first. Send REGISTER."
+        session.context = {**ctx, "expected_date": d.isoformat()}
+        centres = await recommendation_service.recommend(
+            db,
+            crop=ctx["crop"],
+            expected_date=d,
+            farmer_lat=farmer.latitude or 20.59,
+            farmer_lng=farmer.longitude or 78.96,
+            pincode=farmer.pincode,
+        )
+        if not centres:
+            session.state = "idle"
+            session.context = {}
+            return (
+                "No centres currently accept this crop on your date. "
+                "Try CENTRE <pincode> or pick a different crop/date."
+            )
+        kept = centres[:3]
+        session.context = {
+            **ctx,
+            "expected_date": d.isoformat(),
+            "candidates": [
+                {
+                    "centre_id": str(r.centre.id),
+                    "name": r.centre.name,
+                    "distance_km": r.distance_km,
+                    "has_slots": r.has_slots,
+                }
+                for r in kept
+            ],
+        }
+        session.state = "bk_centre"
+        lines = ["Select a centre by replying with its number:"]
+        for i, c in enumerate(kept, 1):
+            slot = "slots available" if c.has_slots else "no slots"
+            lines.append(f"{i}. {c.centre.name} ({c.distance_km:.1f} km, {slot})")
+        return "\n".join(lines)
+
+    if state == "bk_centre":
+        idx = parse_int_selection(text)
+        candidates = ctx.get("candidates") or []
+        if idx is None or idx > len(candidates):
+            return "Please reply with a valid centre number from the list."
+        centre = candidates[idx - 1]
+        d = date.fromisoformat(ctx["expected_date"])
+        slots = await slot_service.list_available(
+            db, uuid.UUID(centre["centre_id"]), d
+        )
+        if not slots:
+            session.state = "bk_date"
+            return (
+                "No time slots available on that date for this centre. "
+                "Enter another date in DD-MM-YYYY (e.g. 15-09-2026)."
+            )
+        session.context = {
+            **ctx,
+            "centre": centre,
+            "slots": [
+                {
+                    "id": str(s.id),
+                    "label": f"{s.start_time.strftime('%H:%M')}-{s.end_time.strftime('%H:%M')}",
+                }
+                for s in slots
+            ],
+        }
+        session.state = "bk_slot"
+        lines = ["Select a time slot by replying with its number:"]
+        for i, s in enumerate(slots, 1):
+            lines.append(
+                f"{i}. {s.start_time.strftime('%H:%M')}-{s.end_time.strftime('%H:%M')}"
+            )
+        return "\n".join(lines)
+
+    if state == "bk_slot":
+        idx = parse_int_selection(text)
+        slots = ctx.get("slots") or []
+        if idx is None or idx > len(slots):
+            return "Please reply with a valid slot number from the list."
+        slot = slots[idx - 1]
+        centre = ctx.get("centre") or {}
+        farmer = await _get_farmer(db, phone)
+        if not farmer:
+            return "You must register first. Send REGISTER."
+        d = date.fromisoformat(ctx["expected_date"])
+        try:
+            booking = await booking_service.create(
+                db,
+                farmer_id=farmer.id,
+                crop=ctx["crop"],
+                quantity=ctx["quantity"],
+                expected_date=d,
+                unit="quintal",
+                centre_id=uuid.UUID(centre["centre_id"]),
+                slot_id=uuid.UUID(slot["id"]),
+            )
+        except ValidationError as e:  # noqa: BLE001
+            return str(e)
+        session.state = "idle"
+        session.context = {}
+        centre_id = centre.get("centre_id")
+        if centre_id:
+            with contextlib.suppress(Exception):
+                await slot_service.refresh_availability(db, uuid.UUID(centre_id))
+        return (
+            f"Booking confirmed! Ref: {booking.booking_id}\n"
+            f"Crop: {booking.crop}\n"
+            f"Qty: {booking.quantity} {booking.unit}\n"
+            f"Centre: {centre.get('name', '')}\n"
+            f"Date: {format_date(d)}\n"
+            f"Slot: {slot['label']}\n"
+            f"Status: {booking.status.value}\n"
+            f"CANCEL or RESCHEDULE if this changes."
+        )
+
+    return None
+
+
+async def _handle_command(
+    db: AsyncSession, phone: str, text: str, session: SMSSession
+) -> str | None:
     """Process a command or continue an active conversation. Returns None when
     the message should be ignored (e.g. a spam/service notice)."""
     stripped = text.strip()
@@ -183,7 +377,10 @@ async def _handle_command(phone: str, text: str, session: SMSSession) -> str | N
 
     # If in a conversation flow, continue it
     if session.state and session.state != "idle":
-        reply = await _handle_registration_flow(session, text, phone)
+        if session.state.startswith("bk_"):
+            reply = await _handle_booking_flow(db, session, text, phone)
+        else:
+            reply = await _handle_registration_flow(session, text, phone)
         if reply:
             return reply
 
@@ -205,8 +402,7 @@ async def _handle_command(phone: str, text: str, session: SMSSession) -> str | N
 
     if command == "REGISTER":
         # Check if already registered
-        async with async_session_factory() as db:
-            existing = await farmer_service.get_by_phone(db, phone)
+        existing = await farmer_service.get_by_phone(db, phone)
         if existing:
             return (
                 f"You are already registered (ID: {existing.farmer_id}). "
@@ -218,20 +414,90 @@ async def _handle_command(phone: str, text: str, session: SMSSession) -> str | N
         return "Let's register you. Enter your full name."
 
     if command == "BOOK":
-        return "Booking service coming soon. Send BOOK after full platform launch."
+        farmer = await _get_farmer(db, phone)
+        if not farmer:
+            session.state = "awaiting_name"
+            session.context = {}
+            return "You need to register first. Enter your full name to start."
+        session.state = "bk_crop"
+        session.context = {}
+        session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+        return "Let's make a booking. Enter the crop name (e.g. Soybean)."
 
     if command == "STATUS":
-        return "Send STATUS with your booking ID, e.g. STATUS BK-00001"
+        parts = stripped.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) > 1 else None
+        booking = None
+        if code:
+            booking, _ = await _get_owned_booking(db, phone, code)
+            if not booking:
+                return (
+                    "Booking not found. Send STATUS for your latest booking "
+                    "or STATUS <booking ID>."
+                )
+        else:
+            farmer = await _get_farmer(db, phone)
+            if not farmer:
+                return "You must register first. Send REGISTER."
+            bookings = await booking_service.list_for_farmer(db, farmer.id)
+            booking = bookings[0] if bookings else None
+        if not booking:
+            return "No bookings found. Send BOOK to make one."
+        centre_name = await _get_centre_name(db, booking.centre_id)
+        return "\n".join(
+            [
+                f"Booking {booking.booking_id}: {booking.crop}",
+                f"Qty: {booking.quantity} {booking.unit}",
+                f"Centre: {centre_name}",
+                f"Date: {format_date(booking.expected_date)}",
+                f"Status: {booking.status.value}",
+            ]
+        )
 
     if command == "QUEUE":
-        return "Queue info will be available once you check in at a centre."
+        farmer = await _get_farmer(db, phone)
+        if not farmer:
+            return "You must register first. Send REGISTER."
+        bookings = await booking_service.list_for_farmer(db, farmer.id)
+        active = next(
+            (
+                b
+                for b in bookings
+                if b.status in (BookingStatus.CHECKED_IN, BookingStatus.PROCESSING)
+            ),
+            None,
+        )
+        if not active:
+            return (
+                "You have no active queue entry. Your booking must be checked "
+                "in at a centre to appear in the queue. Send STATUS to check."
+            )
+        entry = (
+            await db.execute(
+                select(QueueEntry).where(QueueEntry.booking_id == active.id)
+            )
+        ).scalar_one_or_none()
+        if not entry:
+            return "You have no active queue entry."
+        waiting = await queue_service.list_waiting(db, entry.centre_id)
+        ahead = sum(
+            1 for w in waiting if w.position < entry.position
+        )
+        eta = await queue_service.estimate_wait(db, entry.centre_id, entry.position)
+        return "\n".join(
+            [
+                f"Queue position: {entry.position}",
+                f"Ahead of you: {ahead}",
+                f"Estimated wait: ~{eta} min",
+                f"Status: {entry.status.value}",
+            ]
+        )
 
     if command == "CENTRE":
         parts = text.strip().split(maxsplit=1)
         pincode = parts[1].strip() if len(parts) > 1 else None
         if not pincode:
-            async with async_session_factory() as db:
-                farmer = await farmer_service.get_by_phone(db, phone)
+            farmer = await _get_farmer(db, phone)
             if farmer and farmer.pincode:
                 pincode = farmer.pincode
             else:
@@ -247,16 +513,102 @@ async def _handle_command(phone: str, text: str, session: SMSSession) -> str | N
         return "\n".join(lines)
 
     if command == "PAYMENT":
-        return "Payment info will be sent after your procurement is complete."
+        parts = stripped.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) > 1 else None
+        farmer = await _get_farmer(db, phone)
+        if not farmer:
+            return "You must register first. Send REGISTER."
+        rows = []
+        if code:
+            booking, owner = await _get_owned_booking(db, phone, code)
+            if not booking:
+                return "Booking not found or does not belong to you."
+            proc = (
+                await db.execute(
+                    select(Procurement).where(Procurement.booking_id == booking.id)
+                )
+            ).scalar_one_or_none()
+            if proc:
+                rows = list(
+                    (
+                        await db.execute(
+                            select(Payment)
+                            .where(Payment.procurement_id == proc.id)
+                            .order_by(Payment.created_at.desc())
+                        )
+                    ).scalars().all()
+                )
+        else:
+            rows = list(
+                (
+                    await db.execute(
+                        select(Payment)
+                        .where(Payment.farmer_id == farmer.id)
+                        .order_by(Payment.created_at.desc())
+                        .limit(3)
+                    )
+                ).scalars().all()
+            )
+        if not rows:
+            return (
+                "No payments found yet. Payments appear after your "
+                "procurement is accepted and verified."
+            )
+        lines = []
+        for p in rows:
+            lines.append(f"{p.payment_id}: Rs.{format_currency(p.amount)} ({p.status.value})")
+        return "\n".join(lines)
 
     if command == "HISTORY":
-        return "History feature coming soon."
+        farmer = await _get_farmer(db, phone)
+        if not farmer:
+            return "You must register first. Send REGISTER."
+        bookings = await booking_service.list_for_farmer(db, farmer.id)
+        if not bookings:
+            return "No booking history yet. Send BOOK to make your first booking."
+        lines = []
+        for b in bookings[:5]:
+            lines.append(
+                f"{b.booking_id}: {b.crop} {b.quantity:g} {b.unit} "
+                f"{format_date(b.expected_date)} ({b.status.value})"
+            )
+        return "\n".join(lines)
 
     if command == "CANCEL":
-        return "Send CANCEL with your booking ID, e.g. CANCEL BK-00001"
+        parts = stripped.split(maxsplit=1)
+        if len(parts) < 2:
+            return "Send CANCEL with your booking ID, e.g. CANCEL BK-8F32A"
+        booking, _ = await _get_owned_booking(db, phone, parts[1])
+        if not booking:
+            return "Booking not found or does not belong to you."
+        if booking.status not in (BookingStatus.PENDING, BookingStatus.CONFIRMED):
+            return f"Cannot cancel a booking in status {booking.status.value}."
+        await booking_service.cancel(db, booking)
+        return f"Booking {booking.booking_id} has been cancelled."
 
     if command == "RESCHEDULE":
-        return "Send RESCHEDULE with your booking ID, e.g. RESCHEDULE BK-00001"
+        parts = stripped.split(maxsplit=2)
+        if len(parts) < 3:
+            return (
+                "Send RESCHEDULE with your booking ID and new date, "
+                "e.g. RESCHEDULE BK-8F32A 20-09-2026"
+            )
+        booking, _ = await _get_owned_booking(db, phone, parts[1])
+        if not booking:
+            return "Booking not found or does not belong to you."
+        d = parse_date(parts[2])
+        if d is None or d < date.today():
+            return "Please enter a valid future date in DD-MM-YYYY format."
+        try:
+            booking = await booking_service.reschedule(
+                db, booking, BookingReschedule(expected_date=d)
+            )
+        except ValidationError as e:  # noqa: BLE001
+            return str(e)
+        return (
+            f"Booking {booking.booking_id} rescheduled to {format_date(d)}. "
+            f"Status: {booking.status.value}."
+        )
 
     # Not a recognised command. Prompt again if we're mid-conversation, but stay
     # silent otherwise — this is likely a notice from e.g. Jio/your carrier that
@@ -299,7 +651,7 @@ async def handle_incoming_sms(request: Request) -> dict[str, str]:
             return {"status": "duplicate"}
 
         # Process message
-        reply = await _handle_command(phone, text, session)
+        reply = await _handle_command(db, phone, text, session)
         await db.commit()
 
     # Send reply (best-effort: a delivery failure must not make the webhook

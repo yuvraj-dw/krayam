@@ -82,6 +82,13 @@ class BookingService:
         )
         return list(result.scalars().all())
 
+    async def get_by_code(self, db: AsyncSession, code: str) -> Booking | None:
+        """Look up a booking by its human-readable code (e.g. BK-8F32A)."""
+        result = await db.execute(
+            select(Booking).where(Booking.booking_id == code.strip().upper())
+        )
+        return result.scalar_one_or_none()
+
     async def transition(self, db, booking: Booking, to: BookingStatus) -> Booking:
         """Validate and apply a booking status transition."""
         allowed = VALID_TRANSITIONS[booking.status]
