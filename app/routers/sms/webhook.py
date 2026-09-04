@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import async_session_factory
 from app.models.sms import SMSMessage, SMSSession
 from app.services.farmer import farmer_service
+from app.services.mandi import mandi_service
 from app.services.sms_gate import sms_gate_client
 from app.utils.phone import normalize_phone
 
@@ -174,9 +175,11 @@ async def _handle_registration_flow(session: SMSSession, text: str, phone: str) 
     return None
 
 
-async def _handle_command(phone: str, text: str, session: SMSSession) -> str:
-    """Process a command or continue an active conversation."""
-    command = text.strip().upper()
+async def _handle_command(phone: str, text: str, session: SMSSession) -> str | None:
+    """Process a command or continue an active conversation. Returns None when
+    the message should be ignored (e.g. a spam/service notice)."""
+    stripped = text.strip()
+    command = stripped.split(maxsplit=1)[0].upper() if stripped else ""
 
     # If in a conversation flow, continue it
     if session.state and session.state != "idle":
@@ -224,7 +227,24 @@ async def _handle_command(phone: str, text: str, session: SMSSession) -> str:
         return "Queue info will be available once you check in at a centre."
 
     if command == "CENTRE":
-        return "Send your pincode to find nearby centres, e.g. CENTRE 400001"
+        parts = text.strip().split(maxsplit=1)
+        pincode = parts[1].strip() if len(parts) > 1 else None
+        if not pincode:
+            async with async_session_factory() as db:
+                farmer = await farmer_service.get_by_phone(db, phone)
+            if farmer and farmer.pincode:
+                pincode = farmer.pincode
+            else:
+                return "Send your pincode to find nearby centres, e.g. CENTRE 400001"
+        if not (pincode.isdigit() and len(pincode) == 6):
+            return "Please enter a valid 6-digit pincode, e.g. CENTRE 400001."
+        markets, area = await mandi_service.find_markets_near(pincode)
+        if not markets:
+            return f"No procurement centres found near {pincode}."
+        lines = [f"Centres near {pincode} ({area}):"]
+        for m in markets[:3]:
+            lines.append(f"- {m.name} ({m.distance_km} km)")
+        return "\n".join(lines)
 
     if command == "PAYMENT":
         return "Payment info will be sent after your procurement is complete."
@@ -238,7 +258,12 @@ async def _handle_command(phone: str, text: str, session: SMSSession) -> str:
     if command == "RESCHEDULE":
         return "Send RESCHEDULE with your booking ID, e.g. RESCHEDULE BK-00001"
 
-    return "Sorry, I didn't understand that. Send HELP for available commands."
+    # Not a recognised command. Prompt again if we're mid-conversation, but stay
+    # silent otherwise — this is likely a notice from e.g. Jio/your carrier that
+    # never deserves a reply (and lets any new number still register via REGISTER).
+    if session.state and session.state != "idle":
+        return "Sorry, I didn't understand that. Send HELP for available commands."
+    return None
 
 
 @router.post("/sms/incoming")
