@@ -30,12 +30,32 @@ COMMANDS = {
 
 
 class SMSWebhookPayload(BaseModel):
-    """SMS Gate webhook payload for incoming messages."""
+    """SMS Gate webhook payload for incoming messages.
 
+    SMS Gate cloud enclose-format sends an envelope:
+      { "event": "sms:received", "payload": { "message", "sender", ... } }
+    Older/flat format sends the fields at the top level:
+      { "message": ..., "sender": ..., "recipient": ... }
+    Both are normalized here.
+    """
+
+    event: str | None = None
     messageId: str | None = None
-    message: str
-    sender: str
+    message: str = ""
+    sender: str = ""
     recipient: str | None = None
+
+    @classmethod
+    def from_envelope(cls, body: dict) -> "SMSWebhookPayload":
+        payload = body.get("payload") if isinstance(body.get("payload"), dict) else None
+        fields = {
+            "event": body.get("event"),
+            "messageId": (payload or {}).get("messageId") or body.get("messageId"),
+            "message": (payload or {}).get("message") or body.get("message", ""),
+            "sender": (payload or {}).get("sender") or body.get("sender", ""),
+            "recipient": (payload or {}).get("recipient") or body.get("recipient"),
+        }
+        return cls(**fields)
 
 
 async def _send_reply(phone: str, message: str) -> None:
@@ -228,10 +248,12 @@ async def _handle_command(phone: str, text: str, session: SMSSession) -> str:
 async def handle_incoming_sms(request: Request) -> dict[str, str]:
     """Webhook endpoint for incoming SMS from SMS Gate.
 
-    SMS Gate sends: { "messageId": "...", "message": "...", "sender": "...", "recipient": "..." }
+    Accepts both the SMS Gate cloud envelope format
+    ({ "event": "sms:received", "payload": { "message", "sender", ... } })
+    and the flat format ({ message, sender, recipient }).
     """
     body = await request.json()
-    payload = SMSWebhookPayload(**body)
+    payload = SMSWebhookPayload.from_envelope(body)
 
     phone = normalize_phone(payload.sender)
     text = payload.message.strip()

@@ -62,7 +62,7 @@ class OTPService:
         await sms_gate_client.send_sms(
             to=normalized,
             message=(
-                f"AgriProcurement: Your login OTP is {code}. "
+                f"Your {settings.APP_NAME} code is {code}. "
                 f"Ignore if not requested. Valid {settings.OTP_EXPIRY_MINUTES} mins."
             ),
         )
