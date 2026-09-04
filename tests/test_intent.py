@@ -6,7 +6,7 @@ async def test_parse_returns_none_when_disabled(monkeypatch):
     class _S:
         LLM_ENABLED = False
         LLM_API_KEY = ""
-        LLM_MODEL = "gemini-2.0-flash"
+        LLM_MODEL = "gemini-3-flash-preview"
         LLM_BASE_URL = "http://unused"
         LLM_TIMEOUT_SECONDS = 1.0
 
