@@ -520,7 +520,7 @@ async def _handle_command(
             return "You must register first. Send REGISTER."
         rows = []
         if code:
-            booking, owner = await _get_owned_booking(db, phone, code)
+            booking, _ = await _get_owned_booking(db, phone, code)
             if not booking:
                 return "Booking not found or does not belong to you."
             proc = (
