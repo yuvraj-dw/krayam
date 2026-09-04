@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -65,7 +65,7 @@ async def _get_or_create_session(
         select(SMSSession)
         .where(
             SMSSession.phone == phone,
-            SMSSession.expires_at > datetime.now(UTC),
+            SMSSession.expires_at > datetime.now(timezone.utc),
         )
         .order_by(SMSSession.created_at.desc())
         .limit(1)
@@ -77,7 +77,7 @@ async def _get_or_create_session(
             phone=phone,
             state="idle",
             context={},
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
         )
         db.add(session)
         await db.flush()
@@ -89,9 +89,7 @@ async def _get_or_create_session(
     return session
 
 
-async def _handle_registration_flow(
-    session: SMSSession, text: str, phone: str
-) -> str | None:
+async def _handle_registration_flow(session: SMSSession, text: str, phone: str) -> str | None:
     """Handle multi-step SMS registration. Returns reply message."""
     ctx = session.context or {}
     state = session.state
@@ -149,7 +147,7 @@ async def _handle_registration_flow(
                 await db.commit()
             session.state = "idle"
             session.context = {}
-            session.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+            session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
             return f"Registration complete! Your Farmer ID is {farmer.farmer_id}."
         else:
             session.state = "idle"
@@ -196,7 +194,7 @@ async def _handle_command(phone: str, text: str, session: SMSSession) -> str:
             )
         session.state = "awaiting_name"
         session.context = {}
-        session.expires_at = datetime.now(UTC) + timedelta(minutes=15)
+        session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
         return "Let's register you. Enter your full name."
 
     if command == "BOOK":

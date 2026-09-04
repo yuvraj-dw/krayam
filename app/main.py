@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.database import engine
 from app.exceptions import register_exception_handlers
-from app.routers.sms.webhook import sms_router
+from app.routers.sms.webhook import router as sms_router
 from app.routers.v1.router import api_v1_router
 
 settings = get_settings()

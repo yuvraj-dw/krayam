@@ -16,9 +16,7 @@ def generate_farmer_id() -> str:
 
 
 class FarmerService:
-    async def register(
-        self, db: AsyncSession, phone: str, data: FarmerRegisterRequest
-    ) -> Farmer:
+    async def register(self, db: AsyncSession, phone: str, data: FarmerRegisterRequest) -> Farmer:
         """Register a new farmer."""
         normalized = normalize_phone(phone)
 
@@ -77,9 +75,7 @@ class FarmerService:
         result = await db.execute(select(Farmer).where(Farmer.phone == normalized))
         return result.scalar_one_or_none()
 
-    async def update(
-        self, db: AsyncSession, farmer: Farmer, data: FarmerUpdateRequest
-    ) -> Farmer:
+    async def update(self, db: AsyncSession, farmer: Farmer, data: FarmerUpdateRequest) -> Farmer:
         """Update farmer profile."""
         update_data = data.model_dump(exclude_unset=True)
         for field, value in update_data.items():

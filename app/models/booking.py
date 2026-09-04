@@ -23,7 +23,9 @@ class BookingStatus(str, enum.Enum):
 
 VALID_TRANSITIONS: dict[BookingStatus, set[BookingStatus]] = {
     BookingStatus.PENDING: {
-        BookingStatus.CONFIRMED, BookingStatus.CANCELLED, BookingStatus.EXPIRED
+        BookingStatus.CONFIRMED,
+        BookingStatus.CANCELLED,
+        BookingStatus.EXPIRED,
     },
     BookingStatus.CONFIRMED: {
         BookingStatus.CHECKED_IN,
@@ -55,9 +57,7 @@ class Booking(Base):
     centre_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("centres.id")
     )
-    slot_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("slots.id")
-    )
+    slot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("slots.id"))
     crop: Mapped[str] = mapped_column(String(100), nullable=False)
     quantity: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     unit: Mapped[str] = mapped_column(String(20), default="quintal")

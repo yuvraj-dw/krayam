@@ -26,9 +26,7 @@ class LocationService:
         """Look up pincode via India Post data and return lat/lng."""
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    f"{PINCODE_API_BASE}/pincodes/{pincode}.json", timeout=10.0
-                )
+                resp = await client.get(f"{PINCODE_API_BASE}/pincodes/{pincode}.json", timeout=10.0)
                 if resp.status_code != 200:
                     return None
                 data = resp.json()

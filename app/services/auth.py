@@ -1,7 +1,7 @@
 import logging
 import random
 import string
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from jose import jwt
 from sqlalchemy import and_, select
@@ -33,7 +33,8 @@ class OTPService:
                 and_(
                     OTP.phone == normalized,
                     OTP.purpose == purpose,
-                    OTP.created_at >= datetime.now(UTC)
+                    OTP.created_at
+                    >= datetime.now(timezone.utc)
                     - timedelta(seconds=settings.OTP_RESEND_COOLDOWN_SECONDS),
                 )
             )
@@ -43,8 +44,7 @@ class OTPService:
         recent = recent_otp.scalar_one_or_none()
         if recent:
             raise RateLimitError(
-                f"Please wait {settings.OTP_RESEND_COOLDOWN_SECONDS}s "
-                "before requesting a new OTP"
+                f"Please wait {settings.OTP_RESEND_COOLDOWN_SECONDS}s before requesting a new OTP"
             )
 
         code = self.generate_code()
@@ -53,7 +53,7 @@ class OTPService:
             code=code,
             purpose=purpose,
             max_attempts=settings.OTP_MAX_ATTEMPTS,
-            expires_at=datetime.now(UTC) + timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=settings.OTP_EXPIRY_MINUTES),
         )
         db.add(otp)
         await db.flush()
@@ -91,22 +91,19 @@ class OTPService:
         if not otp:
             raise ValidationError("No valid OTP found. Please request a new one.")
 
-        if otp.expires_at < datetime.now(UTC):
+        if otp.expires_at < datetime.now(timezone.utc):
             raise ValidationError("OTP has expired. Please request a new one.")
 
         if otp.attempts >= otp.max_attempts:
             raise ValidationError(
-                "Maximum verification attempts exceeded. "
-                "Please request a new OTP."
+                "Maximum verification attempts exceeded. Please request a new OTP."
             )
 
         otp.attempts += 1
 
         if otp.code != code:
             await db.flush()
-            raise ValidationError(
-                f"Invalid OTP. {otp.max_attempts - otp.attempts} attempts left."
-            )
+            raise ValidationError(f"Invalid OTP. {otp.max_attempts - otp.attempts} attempts left.")
 
         otp.is_used = True
         await db.flush()
@@ -116,13 +113,13 @@ class OTPService:
 class AuthService:
     def create_access_token(self, farmer_id: str, role: str = "farmer") -> str:
         """Create a JWT access token."""
-        expire = datetime.now(UTC) + timedelta(minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
+        )
         payload = {"sub": farmer_id, "role": role, "exp": expire}
         return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
-    async def get_or_create_farmer(
-        self, db: AsyncSession, phone: str
-    ) -> tuple[Farmer, bool]:
+    async def get_or_create_farmer(self, db: AsyncSession, phone: str) -> tuple[Farmer, bool]:
         """Get existing farmer or return None. Returns (farmer, is_new)."""
         normalized = normalize_phone(phone)
         result = await db.execute(select(Farmer).where(Farmer.phone == normalized))

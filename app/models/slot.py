@@ -1,5 +1,6 @@
 import uuid
-from datetime import date, datetime, time
+from datetime import date as _date
+from datetime import datetime, time
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Time, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -14,7 +15,7 @@ class Slot(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     centre_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("centres.id"))
-    date: Mapped[date] = mapped_column(nullable=False)
+    date: Mapped[_date] = mapped_column(nullable=False)
     start_time: Mapped[time] = mapped_column(Time, nullable=False)
     end_time: Mapped[time] = mapped_column(Time, nullable=False)
     max_bookings: Mapped[int] = mapped_column(Integer, default=10)

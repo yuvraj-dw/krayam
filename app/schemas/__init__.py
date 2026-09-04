@@ -2,6 +2,19 @@ from app.schemas.auth import OTPSendRequest, OTPVerifyRequest, TokenResponse
 from app.schemas.common import ErrorDetail, ErrorResponse, SuccessResponse
 from app.schemas.farmer import FarmerRegisterRequest, FarmerResponse, FarmerUpdateRequest
 from app.schemas.location import ResolvedLocation
+from app.schemas.procurement import (
+    BookingCreate,
+    BookingReschedule,
+    BookingResponse,
+    CentreCreate,
+    CentreCropCreate,
+    CentreCropResponse,
+    CentreResponse,
+    CentreUpdate,
+    RecommendedCentre,
+    SlotCreate,
+    SlotResponse,
+)
 
 __all__ = [
     "ErrorResponse",
@@ -14,4 +27,15 @@ __all__ = [
     "FarmerUpdateRequest",
     "FarmerResponse",
     "ResolvedLocation",
+    "CentreCreate",
+    "CentreUpdate",
+    "CentreResponse",
+    "CentreCropCreate",
+    "CentreCropResponse",
+    "SlotCreate",
+    "SlotResponse",
+    "BookingCreate",
+    "BookingReschedule",
+    "BookingResponse",
+    "RecommendedCentre",
 ]
