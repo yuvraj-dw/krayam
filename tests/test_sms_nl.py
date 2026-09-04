@@ -139,3 +139,53 @@ async def test_nl_book_intent_unregistered_asks_register(client, monkeypatch):
     # ask them to register first.
     assert len(sent) == 1
     assert "register" in sent[0][1].lower()
+
+
+@pytest.mark.anyio
+async def test_nl_book_all_fields_datetime_date_does_not_500(client, monkeypatch):
+    # The LLM may emit expected_date as an ISO datetime (e.g.
+    # "2026-09-15T10:00:00"). parse_intent_json accepts it, so _nl_begin_booking
+    # must convert the date portion and degrade gracefully, never a 500.
+    from app.services.intent import intent_service
+
+    class _S:
+        LLM_ENABLED = True
+
+    monkeypatch.setattr("app.routers.sms.webhook.get_settings", lambda: _S())
+    fake_farmer = type("F", (), {"id": 1})()
+
+    async def fake_farmer_lookup(db_, phone_):
+        return fake_farmer
+
+    monkeypatch.setattr("app.routers.sms.webhook._get_farmer", fake_farmer_lookup)
+
+    sent = []
+
+    async def fake_send(phone, msg):
+        sent.append((phone, msg))
+
+    monkeypatch.setattr("app.routers.sms.webhook._send_reply", fake_send)
+
+    async def captured_flow(db, session, text, phone):
+        return f"PROCEED-{text}"
+
+    monkeypatch.setattr("app.routers.sms.webhook._handle_booking_flow", captured_flow)
+
+    async def book_result(text):
+        return IntentResult(
+            intent="book", crop="Soybean", quantity=30.0, unit="quintal",
+            expected_date="2026-09-15T10:00:00", confidence=0.95,
+            missing=[], needs_clarification=False,
+        )
+
+    monkeypatch.setattr(intent_service, "parse", book_result)
+
+    response = await client.post(
+        "/sms/incoming",
+        json={"message": "Mujhe 30 quintal soybean bechna hai 15 September 2026",
+              "sender": TEST_PHONE, "messageId": "nl-005"},
+    )
+    assert response.status_code == 200
+    # The datetime-suffixed date normalised to DD-MM-YYYY and the flow continued.
+    assert len(sent) == 1
+    assert sent[0][1] == "PROCEED-15-09-2026"

@@ -612,14 +612,15 @@ async def _handle_command(
             f"Status: {booking.status.value}."
         )
 
-    # Not a recognised command. Try natural-language parsing.
+    # Not a recognised command. Natural-language parsing runs only when there
+    # is no active conversation (design spec §3.3); otherwise prompt to
+    # continue the in-progress flow.
+    if session.state and session.state != "idle":
+        return "Sorry, I didn't understand that. Send HELP for available commands."
     reply = await _try_natural_language(db, session, text, phone)
     if reply:
         return reply
-    # LLM unavailable/disabled: stay silent for carrier service notices, but
-    # still prompt if we are mid-conversation.
-    if session.state and session.state != "idle":
-        return "Sorry, I didn't understand that. Send HELP for available commands."
+    # LLM unavailable/disabled: stay silent for carrier service notices.
     return None
 
 
@@ -692,8 +693,12 @@ async def _nl_begin_booking(
 
     # All core fields present: resume at the bk_date step with a DD-MM-YYYY
     # reply so the existing handler runs recommendation and moves on to centre
-    # and slot selection. The model returns an ISO date; convert it here.
-    d = date.fromisoformat(result.expected_date)
+    # and slot selection. The model returns an ISO date (or datetime); take the
+    # date portion and degrade gracefully if it is not really a date.
+    try:
+        d = date.fromisoformat(result.expected_date[:10])
+    except (TypeError, ValueError):
+        return "Sorry, I couldn't understand. Send HELP for the list of commands."
     session.context = {**ctx, "crop": result.crop, "quantity": result.quantity}
     reply = await _handle_booking_flow(db, session, d.strftime("%d-%m-%Y"), phone)
     if not reply:
