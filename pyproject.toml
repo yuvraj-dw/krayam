@@ -1,7 +1,7 @@
 [project]
-name = "agri-procurement"
+name = "krayam"
 version = "0.1.0"
-description = "Agricultural procurement platform backend"
+description = "Krayam agricultural procurement platform backend"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi[standard]>=0.115.0",

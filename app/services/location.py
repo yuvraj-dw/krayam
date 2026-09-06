@@ -8,7 +8,7 @@ from app.schemas.location import ResolvedLocation
 logger = logging.getLogger(__name__)
 
 # Nominatim usage policy: max 1 req/sec, must set user_agent
-nominatim = Nominatim(user_agent="agri-procurement/1.0", timeout=10)
+nominatim = Nominatim(user_agent="krayam/1.0", timeout=10)
 
 PINCODE_API_BASE = "https://aniket-thapa.github.io/india-pincode-api"
 

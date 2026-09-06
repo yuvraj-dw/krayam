@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 RADIUS_KM = 100.0
 MAX_RESULTS = 5
-USER_AGENT = "agri-procurement/1.0 (SIH demo)"
+USER_AGENT = "krayam/1.0 (demo)"
 
 # OpenStreetMap types that represent a real market/mandi.
 _MARKET_TYPES = {"marketplace", "market", "farm", "wholesale"}

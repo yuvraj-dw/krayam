@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     OTP_RESEND_COOLDOWN_SECONDS: int = 60
 
     # App
-    APP_NAME: str = "AgriProcurement"
+    APP_NAME: str = "Krayam"
     DEBUG: bool = False
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 

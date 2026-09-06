@@ -1,4 +1,4 @@
-# AgriProcurement
+# Krayam
 
 Procurement platform that lets farmers sell their harvest to processing centres
 (mandis) — over **SMS** (feature phones, no app needed) and through **web/mobile
