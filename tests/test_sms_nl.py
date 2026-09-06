@@ -1,9 +1,12 @@
+from datetime import datetime, time
+
 import pytest
 from sqlalchemy import delete
 
 from app.database import engine
 from app.models.farmer import Farmer
 from app.models.sms import SMSSession
+from app.schemas.procurement import CentreResponse, RecommendedCentre
 from app.services.intent import IntentResult
 
 TEST_PHONE = "1999888777"
@@ -189,3 +192,77 @@ async def test_nl_book_all_fields_datetime_date_does_not_500(client, monkeypatch
     # The datetime-suffixed date normalised to DD-MM-YYYY and the flow continued.
     assert len(sent) == 1
     assert sent[0][1] == "PROCEED-15-09-2026"
+
+
+@pytest.mark.anyio
+async def test_nl_book_all_fields_resumes_at_bk_date(client, monkeypatch):
+    # When the LLM provides crop+quantity+date up front, _nl_begin_booking must
+    # resume the real booking flow at the bk_date step (set session.state), not
+    # leave the session idle. Regression: it used to call _handle_booking_flow
+    # without setting state, so the flow returned None -> "Could not complete".
+    from app.services.intent import intent_service
+
+    class _S:
+        LLM_ENABLED = True
+
+    monkeypatch.setattr("app.routers.sms.webhook.get_settings", lambda: _S())
+    fake_farmer = type(
+        "F", (), {"id": 1, "latitude": 23.26, "longitude": 77.41, "pincode": "462001"}
+    )()
+
+    async def fake_farmer_lookup(db_, phone_):
+        return fake_farmer
+
+    monkeypatch.setattr("app.routers.sms.webhook._get_farmer", fake_farmer_lookup)
+
+    sent = []
+
+    async def fake_send(phone, msg):
+        sent.append((phone, msg))
+
+    monkeypatch.setattr("app.routers.sms.webhook._send_reply", fake_send)
+
+    fake_centre = CentreResponse(
+        id="0b9b7f8f-8f2b-4b5a-9e3d-000000000001",
+        name="Galla Mandi Bhopal",
+        code="GMB",
+        latitude=23.2599,
+        longitude=77.4126,
+        capacity=50,
+        operating_start=time(9, 0),
+        operating_end=time(17, 0),
+        is_active=True,
+        crops=[],
+        created_at=datetime(2026, 9, 1),
+    )
+
+    async def fake_recommend(*args, **kwargs):
+        return [
+            RecommendedCentre(
+                centre=fake_centre, distance_km=5.0, accepted=True,
+                current_queue=0, est_wait_units=0, load_percent=0.0,
+                has_slots=True, score=10.0, reasons=["Accepts Soybean"],
+            )
+        ]
+
+    monkeypatch.setattr("app.routers.sms.webhook.recommendation_service.recommend", fake_recommend)
+
+    async def book_result(text):
+        return IntentResult(
+            intent="book", crop="Soybean", quantity=30.0, unit="quintal",
+            expected_date="2026-09-15", confidence=0.95,
+            missing=[], needs_clarification=False,
+        )
+
+    monkeypatch.setattr(intent_service, "parse", book_result)
+
+    response = await client.post(
+        "/sms/incoming",
+        json={"message": "Mujhe 30 quintal soybean bechna hai 15 September 2026",
+              "sender": TEST_PHONE, "messageId": "nl-006"},
+    )
+    assert response.status_code == 200
+    assert len(sent) == 1
+    # The real booking flow advanced past bk_date to the centre-selection step.
+    assert "select a centre" in sent[0][1].lower()
+    assert "Galla Mandi Bhopal" in sent[0][1]

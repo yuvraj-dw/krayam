@@ -700,6 +700,7 @@ async def _nl_begin_booking(
     except (TypeError, ValueError):
         return "Sorry, I couldn't understand. Send HELP for the list of commands."
     session.context = {**ctx, "crop": result.crop, "quantity": result.quantity}
+    session.state = "bk_date"
     reply = await _handle_booking_flow(db, session, d.strftime("%d-%m-%Y"), phone)
     if not reply:
         return "Could not complete booking. Send BOOK to start again."
