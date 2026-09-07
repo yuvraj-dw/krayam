@@ -136,7 +136,6 @@ Errors always use `{ "error": { "code", "message" } }` with codes like
 - Free-text fallback: idle, non-command messages go to Gemini (30s timeout) and
   are routed by intent; `book` prefills the flow at the first missing field
   instead of guessing.
-- Dev test number: `+91xxxxxxxxxx` (live sending is restricted to this number).
 
 ## Environment variables
 
