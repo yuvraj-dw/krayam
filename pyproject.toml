@@ -14,14 +14,10 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "geopy>=2.4.0",
     "openai>=1.40.0",
-    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.24.0",
-    "httpx>=0.27.0",
     "ruff>=0.6.0",
     "mypy>=1.11.0",
 ]
@@ -47,7 +43,3 @@ ignore = [
 python_version = "3.10"
 strict = true
 plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]

@@ -68,7 +68,7 @@ Two entry points, one business layer.
 | SMS | SMS Gate (Android SMS gateway) inbound webhook + outbound API |
 | NLP | Gemini via OpenAI-compatible endpoint (`openai` SDK), model `gemini-3-flash-preview` |
 | Geo / mandi lookup | geopy/Nominatim + India Pincode API |
-| Tooling | ruff, mypy, pytest + anyio (hermetic tests) |
+| Tooling | ruff (lint) · mypy (types) |
 
 ## Project layout
 
@@ -147,7 +147,7 @@ Errors always use `{ "error": { "code", "message" } }` with codes like
 | `SMS_GATE_API_URL` / `SMS_GATE_USERNAME` / `SMS_GATE_PASSWORD` | SMS Gate outbound API |
 | `JWT_SECRET_KEY` / `JWT_ALGORITHM` / `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | JWT auth |
 | `OTP_LENGTH` / `OTP_EXPIRY_MINUTES` / `OTP_MAX_ATTEMPTS` / `OTP_RESEND_COOLDOWN_SECONDS` | OTP flow |
-| `LLM_ENABLED` / `LLM_API_KEY` / `LLM_MODEL` / `LLM_TIMEOUT_SECONDS` | Gemini NLP for natural-language SMS |
+| `LLM_ENABLED` / `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` / `LLM_TIMEOUT_SECONDS` | Gemini NLP for natural-language SMS |
 | `APP_NAME` / `DEBUG` / `ALLOWED_ORIGINS` | App-level |
 
 ## Notes

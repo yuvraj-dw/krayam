@@ -11,13 +11,8 @@ venv/
 *.db
 *.sqlite3
 .mypy_cache/
-.pytest_cache/
 .ruff_cache/
 *.log
 node_modules/
 .DS_Store
 Thumbs.db
-
-# Handoff guide for the frontend team — not part of the repo
-docs/backend-guide.md
-docs/backend-guide.pdf
