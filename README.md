@@ -93,12 +93,9 @@ app/
    `SMS_GATE_USERNAME` / `SMS_GATE_PASSWORD`, `JWT_SECRET_KEY`, and for
    natural-language SMS `LLM_ENABLED=true` + `LLM_API_KEY` (`.env` is gitignored).
 2. Apply migrations: `alembic upgrade head`
-3. Seed demo centres and slots. The seeding script is dev-only and kept out of
-   the repo; restore it from git history, or create records through the API:
-   ```
-   git show d569a54^:scripts/seed_sms_demo.py > scripts/seed_sms_demo.py
-   python -m scripts.seed_sms_demo
-   ```
+3. Seed demo centres and slots — the dev seeding script is intentionally kept
+   out of this repo, so create the demo data through the API: `POST /api/v1/centres`
+   then `POST /api/v1/slots`.
 4. Run the API: `uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
 5. Expose the SMS webhook with a tunnel: `cloudflared tunnel run`
    (SMS Gate posts to `https://<tunnel>/sms/incoming`).
@@ -131,8 +128,8 @@ Errors always use `{ "error": { "code", "message" } }` with codes like
 - Accepts both the SMS Gate **envelope** and **flat** webhook payloads and
   deduplicates on `messageId`.
 - Commands: `HELP REGISTER BOOK STATUS QUEUE CENTRE PAYMENT HISTORY CANCEL RESCHEDULE`.
-- Multi-step flows live in `sms_sessions` (`state` + `context`, 30-min expiry);
-  dates are entered as **DD-MM-YYYY**.
+- Multi-step flows live in the `sms_sessions` **database table** (each session
+  carries `state` + `context`, 30-min expiry); dates are entered as **DD-MM-YYYY**.
 - Free-text fallback: idle, non-command messages go to Gemini (30s timeout) and
   are routed by intent; `book` prefills the flow at the first missing field
   instead of guessing.
