@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.exceptions import NotFoundError
 from app.models.centre import Centre
-from app.models.payment import Payment
+from app.models.payment import Payment, PaymentStatus
 from app.models.procurement import Procurement
 from app.models.queue import QueueEntry
 from app.schemas.operations import (
@@ -20,7 +20,10 @@ from app.schemas.operations import (
     QueueEntryResponse,
     QueueSummary,
 )
+from app.services.booking import booking_service
 from app.services.event import event_service
+from app.services.farmer import farmer_service
+from app.services.notification import notification_service
 from app.services.payment import payment_service
 from app.services.procurement import procurement_service
 from app.services.queue import queue_service
@@ -113,15 +116,17 @@ async def record_procurement(
     body: ProcurementRecordRequest,
     db: AsyncSession = Depends(get_db),
 ) -> Procurement:
-    return ProcurementResponse.model_validate(
-        await procurement_service.record(
-            db,
-            booking_id=body.booking_id,
-            accepted_quantity=body.accepted_quantity,
-            unit=body.unit,
-            quality_notes=body.quality_notes,
-        )
+    procurement = await procurement_service.record(
+        db,
+        booking_id=body.booking_id,
+        accepted_quantity=body.accepted_quantity,
+        unit=body.unit,
+        quality_notes=body.quality_notes,
     )
+    booking = await booking_service.get_by_id(db, procurement.booking_id)
+    farmer = await farmer_service.get_by_id(db, booking.farmer_id)
+    await notification_service.notify_procurement_completed(db, procurement, booking, farmer)
+    return ProcurementResponse.model_validate(procurement)
 
 
 @router.post("/procurements/{procurement_id}/payment", response_model=PaymentResponse)
@@ -130,9 +135,11 @@ async def initiate_payment(
     db: AsyncSession = Depends(get_db),
 ) -> Payment:
     procurement = await procurement_service.get_by_id(db, procurement_id)
-    return PaymentResponse.model_validate(
-        await payment_service.create_for_procurement(db, procurement)
-    )
+    payment = await payment_service.create_for_procurement(db, procurement)
+    booking = await booking_service.get_by_id(db, procurement.booking_id)
+    farmer = await farmer_service.get_by_id(db, booking.farmer_id)
+    await notification_service.notify_payment_initiated(db, payment, booking, farmer)
+    return PaymentResponse.model_validate(payment)
 
 
 @router.get("/procurements/{procurement_id}/review")
@@ -150,14 +157,18 @@ async def verify_payment(
     body: PaymentReviewRequest,
     db: AsyncSession = Depends(get_db),
 ) -> Payment:
-    return PaymentResponse.model_validate(
-        await payment_service.review(
-            db,
-            payment_id,
-            confirmed=body.confirmed,
-            verified_by=body.verified_by,
-        )
+    payment = await payment_service.review(
+        db,
+        payment_id,
+        confirmed=body.confirmed,
+        verified_by=body.verified_by,
     )
+    if payment.status == PaymentStatus.CONFIRMED:
+        procurement = await procurement_service.get_by_id(db, payment.procurement_id)
+        booking = await booking_service.get_by_id(db, procurement.booking_id)
+        farmer = await farmer_service.get_by_id(db, booking.farmer_id)
+        await notification_service.notify_payment_confirmed(db, payment, booking, farmer)
+    return PaymentResponse.model_validate(payment)
 
 
 @router.get("/events/{entity_type}/{entity_id}", response_model=list[EventResponse])

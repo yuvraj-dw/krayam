@@ -16,6 +16,7 @@ from app.schemas.procurement import (
     RecommendedCentre,
 )
 from app.services.booking import booking_service
+from app.services.notification import notification_service
 from app.services.recommendation import recommendation_service
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
@@ -27,18 +28,18 @@ async def create_booking(
     farmer: Farmer = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
 ) -> Booking:
-    return BookingResponse.model_validate(
-        await booking_service.create(
-            db,
-            farmer_id=farmer.id,
-            crop=body.crop,
-            quantity=body.quantity,
-            expected_date=body.expected_date,
-            unit=body.unit,
-            centre_id=body.centre_id,
-            slot_id=body.slot_id,
-        )
+    booking = await booking_service.create(
+        db,
+        farmer_id=farmer.id,
+        crop=body.crop,
+        quantity=body.quantity,
+        expected_date=body.expected_date,
+        unit=body.unit,
+        centre_id=body.centre_id,
+        slot_id=body.slot_id,
     )
+    await notification_service.notify_booking_confirmed(db, booking, farmer)
+    return BookingResponse.model_validate(booking)
 
 
 @router.get("", response_model=list[BookingResponse])
@@ -94,7 +95,9 @@ async def cancel_booking(
     booking = await booking_service.get_by_id(db, booking_id)
     if booking.farmer_id != farmer.id:
         raise AuthorizationError("Not your booking")
-    return BookingResponse.model_validate(await booking_service.cancel(db, booking))
+    cancelled = await booking_service.cancel(db, booking)
+    await notification_service.notify_booking_cancelled(db, cancelled, farmer)
+    return BookingResponse.model_validate(cancelled)
 
 
 @router.post("/{booking_id}/reschedule", response_model=BookingResponse)
@@ -107,4 +110,6 @@ async def reschedule_booking(
     booking = await booking_service.get_by_id(db, booking_id)
     if booking.farmer_id != farmer.id:
         raise AuthorizationError("Not your booking")
-    return BookingResponse.model_validate(await booking_service.reschedule(db, booking, body))
+    rescheduled = await booking_service.reschedule(db, booking, body)
+    await notification_service.notify_booking_rescheduled(db, rescheduled, farmer)
+    return BookingResponse.model_validate(rescheduled)
