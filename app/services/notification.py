@@ -62,10 +62,11 @@ class NotificationService:
         self, db: AsyncSession, booking: Booking, farmer: Farmer
     ) -> None:
         centre = await _centre_name(db, booking.centre_id)
+        at_centre = f" at {centre}" if centre else ""
         text = (
             f"Krayam: Booking {booking.booking_id} {_fmt_qty(booking.quantity)} "
-            f"{booking.unit} {booking.crop} for {format_date(booking.expected_date)} "
-            f"at {centre} is confirmed. Send STATUS for updates."
+            f"{booking.unit} {booking.crop} for {format_date(booking.expected_date)}"
+            f"{at_centre} is confirmed. Send STATUS for updates."
         )
         await _notify(db, farmer.phone, text)
 
@@ -95,9 +96,10 @@ class NotificationService:
         farmer: Farmer,
     ) -> None:
         centre = await _centre_name(db, booking.centre_id)
+        at_centre = f" at {centre}" if centre else ""
         text = (
             f"Krayam: {_fmt_qty(procurement.accepted_quantity)} {procurement.unit} "
-            f"{booking.crop} accepted at {centre}."
+            f"{booking.crop} accepted{at_centre}."
         )
         await _notify(db, farmer.phone, text)
 
