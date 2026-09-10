@@ -147,7 +147,7 @@ Errors always use `{ "error": { "code", "message" } }` with codes like
 | `JWT_SECRET_KEY` / `JWT_ALGORITHM` / `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | JWT auth |
 | `OTP_LENGTH` / `OTP_EXPIRY_MINUTES` / `OTP_MAX_ATTEMPTS` / `OTP_RESEND_COOLDOWN_SECONDS` | OTP flow |
 | `LLM_ENABLED` / `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` / `LLM_TIMEOUT_SECONDS` | Gemini NLP for natural-language SMS |
-| `SMS_NOTIFICATIONS_ENABLED` | `true` | Set `false` to log notification SMS without sending (interactive replies are unaffected) |
+| `SMS_NOTIFICATIONS_ENABLED` | Set `false` to log notification SMS without sending (interactive replies are unaffected) |
 | `APP_NAME` / `DEBUG` / `ALLOWED_ORIGINS` | App-level |
 
 ## Notes
