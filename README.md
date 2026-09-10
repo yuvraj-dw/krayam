@@ -34,6 +34,7 @@ process payments.
   only when no conversation is in progress and is read-only — all validation
   and writes go through the normal services.
 - **Automated SMS notifications** — off-channel lifecycle events (booking confirmed, cancelled, rescheduled, procurement accepted, payment initiated & confirmed) are pushed to a farmer's phone via SMS.
+- **Operator analytics + load forecast.** History aggregates (served farmers, procured quantity, wait/processing times, peak hours, no-shows, cancellations, payments) and a deterministic per-centre load forecast with high-load warnings — `GET /api/v1/analytics/summary` and `GET /api/v1/analytics/forecast`.
 - **Conversational state machine.** SMS flows advance step by step
   (register → book → centre → slot → confirm) with session deduplication and a
   full message audit log in the database.
@@ -58,7 +59,7 @@ Two entry points, one business layer.
   PostgreSQL (Supabase) — auth, SMS sessions/audit, queues, procurements, payments
 ```
 
-> **AI scope:** The *only* AI in Krayam is the Gemini natural-language parser in the SMS channel. Centre ranking, wait-time ETA, and payment-anomaly flags are deterministic, rule-based logic — there is no ML behind them and no "AI insights" endpoints.
+> **AI scope:** The *only* AI in Krayam is the Gemini natural-language parser in the SMS channel. Centre ranking, wait-time ETA, payment-anomaly flags, operator analytics, and load forecasts are all deterministic, rule-based logic — there is no ML behind them.
 
 ## Tech stack
 
@@ -121,6 +122,7 @@ knows whether to complete the profile via `/auth/register`.
 | Slots | `POST /slots` · `GET /slots?centre_id=&on_date=` |
 | Bookings | `POST /bookings` · `GET /bookings` · `POST /bookings/recommend` · `GET /bookings/{id}` · `POST /bookings/{id}/cancel` · `POST /bookings/{id}/reschedule` |
 | Operator | `POST /operator/check-in` · `POST /operator/call-next` · `GET /operator/queue/{centre_id}` · queue start/complete/no-show · `POST /operator/procurements` · procurement payment + review · `POST /operator/payments/{id}/verify` · `GET /operator/events/{type}/{id}` |
+| Analytics | `GET /analytics/summary?centre_id=&from=&to=` · `GET /analytics/forecast?centre_id=&date=` |
 | SMS | `POST /sms/incoming` (SMS Gate webhook) |
 
 Errors always use `{ "error": { "code", "message" } }` with codes like
