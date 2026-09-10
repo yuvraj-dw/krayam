@@ -8,6 +8,7 @@ from app.models.queue import QueueEntry, QueueStatus
 from app.models.slot import Slot
 from app.schemas.procurement import RecommendedCentre
 from app.services.centre import centre_service, haversine_km
+from app.services.forecast import forecast_service
 
 
 def _booking_weight(status: BookingStatus) -> int:
@@ -23,9 +24,8 @@ class RecommendationService:
     """Ranks centres for a farmer's booking.
 
     ponytail: naive weighted scoring — distance, crop acceptance, queue load,
-    slot availability. Ceiling: ignores waiting-time ETA prediction and demand
-    forecasting (phases 3/10/11/12). Upgrade path: feed the queue/forecast models
-    into `score` weights.
+    slot availability, expected-load forecast. Ceiling: ignores waiting-time
+    ETA prediction and demand forecasting beyond the expected-load term.
     """
 
     async def recommend(
@@ -51,6 +51,11 @@ class RecommendationService:
                     .group_by(QueueEntry.centre_id)
                 )
             ).all()
+        )
+        expected_loads = await forecast_service.expected_loads(
+            db,
+            centre_ids=[centre.id for centre in centres],
+            target_date=expected_date,
         )
         results: list[RecommendedCentre] = []
         for centre in centres:
@@ -81,6 +86,16 @@ class RecommendationService:
                 reasons.append("Slots available on your date")
             else:
                 reasons.append("No slots on your date")
+            expected_pct = expected_loads.get(centre.id, 0.0)
+            if expected_pct < 50:
+                score += 2.0
+                reasons.append(f"Low expected load on {expected_date}")
+            elif expected_pct < 80:
+                score += 1.0
+                reasons.append(f"Moderate expected load on {expected_date}")
+            else:
+                score -= 1.5
+                reasons.append(f"High expected load on {expected_date}")
 
             results.append(
                 RecommendedCentre(
