@@ -9,6 +9,7 @@ from app.models.booking import BookingStatus
 from app.models.procurement import Procurement
 from app.services.booking import booking_service
 from app.services.event import event_service
+from app.services.outbox import outbox_service
 
 
 def generate_procurement_id() -> str:
@@ -24,6 +25,7 @@ class ProcurementService:
         accepted_quantity: float,
         unit: str = "quintal",
         quality_notes: str | None = None,
+        client_event_id: uuid.UUID | None = None,
     ) -> Procurement:
         if accepted_quantity <= 0:
             raise ValidationError("Accepted quantity must be greater than zero")
@@ -61,6 +63,21 @@ class ProcurementService:
                 "accepted_quantity": accepted_quantity,
                 "booked_quantity": float(booking.quantity),
             },
+        )
+        await outbox_service.emit(
+            db,
+            event_type="procurement.recorded",
+            entity_type="booking",
+            entity_id=booking.id,
+            data={
+                "procurement_id": procurement.procurement_id,
+                "accepted_quantity": accepted_quantity,
+                "booked_quantity": float(booking.quantity),
+            },
+            centre_id=booking.centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="operator",
+            client_event_id=client_event_id,
         )
         await db.commit()
         return procurement

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import NotFoundError, ValidationError
 from app.models.booking import VALID_TRANSITIONS, Booking, BookingStatus
 from app.schemas.procurement import BookingReschedule
+from app.services.outbox import outbox_service
 from app.services.slot import slot_service
 
 
@@ -28,6 +29,7 @@ class BookingService:
         unit: str = "quintal",
         centre_id=None,
         slot_id=None,
+        client_event_id: uuid.UUID | None = None,
     ) -> Booking:
         if quantity <= 0:
             raise ValidationError("Quantity must be greater than zero")
@@ -53,6 +55,23 @@ class BookingService:
         db.add(booking)
         await db.flush()
         await db.refresh(booking)
+        await outbox_service.emit(
+            db,
+            event_type="booking.created",
+            entity_type="booking",
+            entity_id=booking.id,
+            data={
+                "booking_id": booking.booking_id,
+                "crop": booking.crop,
+                "quantity": float(booking.quantity),
+                "unit": booking.unit,
+                "expected_date": booking.expected_date.isoformat(),
+            },
+            centre_id=booking.centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="farmer",
+            client_event_id=client_event_id,
+        )
         return booking
 
     async def _validate_slot(self, db, slot_id, expected_date: date) -> None:
@@ -104,13 +123,33 @@ class BookingService:
                 await slot_service.refresh_availability(db, booking.centre_id)
         return booking
 
-    async def cancel(self, db, booking: Booking) -> Booking:
-        return await self.transition(db, booking, BookingStatus.CANCELLED)
+    async def cancel(
+        self, db, booking: Booking, client_event_id: uuid.UUID | None = None
+    ) -> Booking:
+        booking = await self.transition(db, booking, BookingStatus.CANCELLED)
+        await outbox_service.emit(
+            db,
+            event_type="booking.cancelled",
+            entity_type="booking",
+            entity_id=booking.id,
+            data={"booking_id": booking.booking_id},
+            centre_id=booking.centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="farmer",
+            client_event_id=client_event_id,
+        )
+        return booking
 
     async def confirm(self, db, booking: Booking) -> Booking:
         return await self.transition(db, booking, BookingStatus.CONFIRMED)
 
-    async def reschedule(self, db, booking: Booking, data: BookingReschedule) -> Booking:
+    async def reschedule(
+        self,
+        db,
+        booking: Booking,
+        data: BookingReschedule,
+        client_event_id: uuid.UUID | None = None,
+    ) -> Booking:
         if booking.status not in (
             BookingStatus.CONFIRMED,
             BookingStatus.NO_SHOW,
@@ -136,6 +175,21 @@ class BookingService:
         booking.status = BookingStatus.CONFIRMED
         await db.flush()
         await db.refresh(booking)
+        await outbox_service.emit(
+            db,
+            event_type="booking.rescheduled",
+            entity_type="booking",
+            entity_id=booking.id,
+            data={
+                "booking_id": booking.booking_id,
+                "expected_date": booking.expected_date.isoformat(),
+                "centre_id": str(booking.centre_id) if booking.centre_id else None,
+            },
+            centre_id=booking.centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="farmer",
+            client_event_id=client_event_id,
+        )
         return booking
 
 

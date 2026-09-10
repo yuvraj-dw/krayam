@@ -9,6 +9,7 @@ from app.models.booking import BookingStatus
 from app.models.queue import QueueEntry, QueueStatus
 from app.services.booking import booking_service
 from app.services.event import event_service
+from app.services.outbox import outbox_service
 
 # ponytail: rule-based per-farmer processing time estimate (minutes).
 # Pure prototype value; replaceable by phase 10 ML module behind the same call site.
@@ -18,7 +19,12 @@ ACTIVE_COUNTERS = 2
 
 class QueueService:
     async def check_in(
-        self, db: AsyncSession, *, booking_id: uuid.UUID, centre_id: uuid.UUID
+        self,
+        db: AsyncSession,
+        *,
+        booking_id: uuid.UUID,
+        centre_id: uuid.UUID,
+        client_event_id: uuid.UUID | None = None,
     ) -> QueueEntry:
         booking = await booking_service.get_by_id(db, booking_id)
         if booking.centre_id != centre_id:
@@ -54,6 +60,17 @@ class QueueService:
             entity_id=booking.id,
             data={"centre_id": str(centre_id), "position": pos},
         )
+        await outbox_service.emit(
+            db,
+            event_type="queue.check_in",
+            entity_type="booking",
+            entity_id=booking.id,
+            data={"queue_entry_id": str(entry.id), "position": pos},
+            centre_id=centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="operator",
+            client_event_id=client_event_id,
+        )
         await db.commit()
         return entry
 
@@ -70,7 +87,9 @@ class QueueService:
         last = result.scalar()
         return (last or 0) + 1
 
-    async def call_next(self, db: AsyncSession, centre_id: uuid.UUID) -> QueueEntry | None:
+    async def call_next(
+        self, db: AsyncSession, centre_id: uuid.UUID, client_event_id: uuid.UUID | None = None
+    ) -> QueueEntry | None:
         result = await db.execute(
             select(QueueEntry)
             .where(
@@ -94,10 +113,24 @@ class QueueService:
             entity_id=entry.booking_id,
             data={"queue_entry_id": str(entry.id)},
         )
+        booking = await booking_service.get_by_id(db, entry.booking_id)
+        await outbox_service.emit(
+            db,
+            event_type="queue.called",
+            entity_type="booking",
+            entity_id=booking.id,
+            data={"queue_entry_id": str(entry.id), "position": entry.position},
+            centre_id=centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="operator",
+            client_event_id=client_event_id,
+        )
         await db.commit()
         return entry
 
-    async def mark_no_show(self, db: AsyncSession, queue_entry_id: uuid.UUID) -> QueueEntry:
+    async def mark_no_show(
+        self, db: AsyncSession, queue_entry_id: uuid.UUID, client_event_id: uuid.UUID | None = None
+    ) -> QueueEntry:
         entry = await self.get_entry(db, queue_entry_id)
         if entry.status not in (QueueStatus.WAITING, QueueStatus.CALLED):
             raise ValidationError("Only waiting/called farmers can be marked no-show")
@@ -112,10 +145,22 @@ class QueueService:
             entity_type="booking",
             entity_id=booking.id,
         )
+        await outbox_service.emit(
+            db,
+            event_type="queue.no_show",
+            entity_type="booking",
+            entity_id=booking.id,
+            centre_id=booking.centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="operator",
+            client_event_id=client_event_id,
+        )
         await db.commit()
         return entry
 
-    async def start_processing(self, db: AsyncSession, queue_entry_id: uuid.UUID) -> QueueEntry:
+    async def start_processing(
+        self, db: AsyncSession, queue_entry_id: uuid.UUID, client_event_id: uuid.UUID | None = None
+    ) -> QueueEntry:
         entry = await self.get_entry(db, queue_entry_id)
         if entry.status != QueueStatus.CALLED:
             raise ValidationError("Only a called farmer can start processing")
@@ -131,10 +176,22 @@ class QueueService:
             entity_type="booking",
             entity_id=booking.id,
         )
+        await outbox_service.emit(
+            db,
+            event_type="queue.processing_started",
+            entity_type="booking",
+            entity_id=booking.id,
+            centre_id=booking.centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="operator",
+            client_event_id=client_event_id,
+        )
         await db.commit()
         return entry
 
-    async def complete_processing(self, db: AsyncSession, queue_entry_id: uuid.UUID) -> QueueEntry:
+    async def complete_processing(
+        self, db: AsyncSession, queue_entry_id: uuid.UUID, client_event_id: uuid.UUID | None = None
+    ) -> QueueEntry:
         entry = await self.get_entry(db, queue_entry_id)
         if entry.status != QueueStatus.PROCESSING:
             raise ValidationError("Only a processing farmer can be completed")
@@ -149,6 +206,16 @@ class QueueService:
             event_type="processing_completed",
             entity_type="booking",
             entity_id=booking.id,
+        )
+        await outbox_service.emit(
+            db,
+            event_type="queue.processing_completed",
+            entity_type="booking",
+            entity_id=booking.id,
+            centre_id=booking.centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="operator",
+            client_event_id=client_event_id,
         )
         await db.commit()
         return entry

@@ -17,6 +17,7 @@ from app.schemas.procurement import (
 )
 from app.services.booking import booking_service
 from app.services.notification import notification_service
+from app.services.outbox import outbox_service
 from app.services.recommendation import recommendation_service
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
@@ -28,6 +29,7 @@ async def create_booking(
     farmer: Farmer = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
 ) -> Booking:
+    before = await outbox_service.max_id(db)
     booking = await booking_service.create(
         db,
         farmer_id=farmer.id,
@@ -39,6 +41,11 @@ async def create_booking(
         slot_id=body.slot_id,
     )
     await notification_service.notify_booking_confirmed(db, booking, farmer)
+    await db.commit()
+    if booking.centre_id is not None:
+        await outbox_service.publish_after(
+            db, centre_id=booking.centre_id, after=before
+        )
     return BookingResponse.model_validate(booking)
 
 
@@ -95,8 +102,14 @@ async def cancel_booking(
     booking = await booking_service.get_by_id(db, booking_id)
     if booking.farmer_id != farmer.id:
         raise AuthorizationError("Not your booking")
+    before = await outbox_service.max_id(db)
     cancelled = await booking_service.cancel(db, booking)
     await notification_service.notify_booking_cancelled(db, cancelled, farmer)
+    await db.commit()
+    if cancelled.centre_id is not None:
+        await outbox_service.publish_after(
+            db, centre_id=cancelled.centre_id, after=before
+        )
     return BookingResponse.model_validate(cancelled)
 
 
@@ -110,6 +123,12 @@ async def reschedule_booking(
     booking = await booking_service.get_by_id(db, booking_id)
     if booking.farmer_id != farmer.id:
         raise AuthorizationError("Not your booking")
+    before = await outbox_service.max_id(db)
     rescheduled = await booking_service.reschedule(db, booking, body)
     await notification_service.notify_booking_rescheduled(db, rescheduled, farmer)
+    await db.commit()
+    if rescheduled.centre_id is not None:
+        await outbox_service.publish_after(
+            db, centre_id=rescheduled.centre_id, after=before
+        )
     return BookingResponse.model_validate(rescheduled)

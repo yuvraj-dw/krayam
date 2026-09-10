@@ -11,6 +11,7 @@ from app.models.procurement import Procurement
 from app.services.anomaly import anomaly_detector
 from app.services.booking import booking_service
 from app.services.event import event_service
+from app.services.outbox import outbox_service
 
 
 def generate_payment_id() -> str:
@@ -19,7 +20,7 @@ def generate_payment_id() -> str:
 
 class PaymentService:
     async def create_for_procurement(
-        self, db: AsyncSession, procurement: Procurement
+        self, db: AsyncSession, procurement: Procurement, client_event_id: uuid.UUID | None = None
     ) -> Payment:
         """Backend-computed payment. Never trusts a frontend amount."""
         booking = await booking_service.get_by_id(db, procurement.booking_id)
@@ -53,6 +54,21 @@ class PaymentService:
                 "amount": amount,
                 "anomaly_flags": flags,
             },
+        )
+        await outbox_service.emit(
+            db,
+            event_type="payment.initiated",
+            entity_type="booking",
+            entity_id=booking.id,
+            data={
+                "payment_id": payment.payment_id,
+                "amount": amount,
+                "anomaly_flags": flags,
+            },
+            centre_id=booking.centre_id,
+            farmer_id=booking.farmer_id,
+            actor_type="operator",
+            client_event_id=client_event_id,
         )
         await db.commit()
         return payment
@@ -105,6 +121,7 @@ class PaymentService:
         *,
         confirmed: bool,
         verified_by: str | None = None,
+        client_event_id: uuid.UUID | None = None,
     ) -> Payment:
         """Human operator confirms or rejects. AI never auto-confirms."""
         payment = await self.get_by_id(db, payment_id)
@@ -132,6 +149,30 @@ class PaymentService:
             entity_id=payment.procurement_id,
             data={"payment_id": payment.payment_id, "verified_by": verified_by},
         )
+        procurement = (
+            await db.execute(select(Procurement).where(Procurement.id == payment.procurement_id))
+        ).scalar_one_or_none()
+        booking = (
+            await booking_service.get_by_id(db, procurement.booking_id)
+            if procurement
+            else None
+        )
+        if booking is not None:
+            await outbox_service.emit(
+                db,
+                event_type="payment.confirmed" if confirmed else "payment.verified",
+                entity_type="booking",
+                entity_id=booking.id,
+                data={
+                    "payment_id": payment.payment_id,
+                    "confirmed": confirmed,
+                    "verified_by": verified_by,
+                },
+                centre_id=booking.centre_id,
+                farmer_id=booking.farmer_id,
+                actor_type="operator",
+                client_event_id=client_event_id,
+            )
         await db.commit()
         return payment
 
