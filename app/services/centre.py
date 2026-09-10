@@ -82,8 +82,16 @@ class CentreService:
                 CentreCrop.centre_id == centre_id, CentreCrop.crop_name == data.crop_name
             )
         )
-        if existing.scalar_one_or_none():
-            raise ConflictError(f"Centre already accepts {data.crop_name!r}")
+        crop = existing.scalar_one_or_none()
+        if crop:
+            if crop.is_active:
+                raise ConflictError(f"Centre already accepts {data.crop_name!r}")
+            crop.is_active = True
+            crop.rate_per_unit = data.rate_per_unit
+            crop.unit = data.unit
+            await db.flush()
+            await db.refresh(crop)
+            return crop
         crop = CentreCrop(centre_id=centre_id, **data.model_dump())
         db.add(crop)
         await db.flush()

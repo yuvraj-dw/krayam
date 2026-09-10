@@ -43,15 +43,14 @@ class RecommendationService:
             return []
 
         # Load per centre: active queue positions + pending/confirmed bookings load.
-        queue_counts = dict(
-            (
-                await db.execute(
-                    select(QueueEntry.centre_id, func.count(QueueEntry.id))
-                    .where(QueueEntry.status.in_([QueueStatus.WAITING, QueueStatus.CALLED]))
-                    .group_by(QueueEntry.centre_id)
-                )
-            ).all()
-        )
+        rows = (
+            await db.execute(
+                select(QueueEntry.centre_id, func.count(QueueEntry.id))
+                .where(QueueEntry.status.in_([QueueStatus.WAITING, QueueStatus.CALLED]))
+                .group_by(QueueEntry.centre_id)
+            )
+        ).all()
+        queue_counts = {cid: int(cnt) for cid, cnt in rows}
         expected_loads = await forecast_service.expected_loads(
             db,
             centre_ids=[centre.id for centre in centres],

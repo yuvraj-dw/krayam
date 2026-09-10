@@ -22,6 +22,7 @@ from app.services.centre import centre_service
 from app.services.farmer import farmer_service
 from app.services.intent import IntentResult, intent_service
 from app.services.mandi import mandi_service
+from app.services.outbox import outbox_service
 from app.services.queue import queue_service
 from app.services.recommendation import recommendation_service
 from app.services.slot import slot_service
@@ -132,7 +133,9 @@ async def _get_or_create_session(
     return session
 
 
-async def _handle_registration_flow(session: SMSSession, text: str, phone: str) -> str | None:
+async def _handle_registration_flow(
+    db: AsyncSession, session: SMSSession, text: str, phone: str
+) -> str | None:
     """Handle multi-step SMS registration. Returns reply message."""
     ctx = session.context or {}
     state = session.state
@@ -182,9 +185,7 @@ async def _handle_registration_flow(session: SMSSession, text: str, phone: str) 
                 district=ctx.get("district"),
                 pincode=ctx.get("pincode"),
             )
-            async with async_session_factory() as db:
-                farmer = await farmer_service.register(db, phone, data)
-                await db.commit()
+            farmer = await farmer_service.register(db, phone, data)
             session.state = "idle"
             session.context = {}
             session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
@@ -286,8 +287,8 @@ async def _handle_booking_flow(
         session.state = "bk_centre"
         lines = ["Select a centre by replying with its number:"]
         for i, c in enumerate(kept, 1):
-            slot = "slots available" if c.has_slots else "no slots"
-            lines.append(f"{i}. {c.centre.name} ({c.distance_km:.1f} km, {slot})")
+            slot_avail = "slots available" if c.has_slots else "no slots"
+            lines.append(f"{i}. {c.centre.name} ({c.distance_km:.1f} km, {slot_avail})")
         return "\n".join(lines)
 
     if state == "bk_centre":
@@ -327,10 +328,10 @@ async def _handle_booking_flow(
 
     if state == "bk_slot":
         idx = parse_int_selection(text)
-        slots = ctx.get("slots") or []
-        if idx is None or idx > len(slots):
+        slot_list = ctx.get("slots") or []
+        if idx is None or idx > len(slot_list):
             return "Please reply with a valid slot number from the list."
-        slot = slots[idx - 1]
+        chosen_slot = slot_list[idx - 1]
         centre = ctx.get("centre") or {}
         farmer = await _get_farmer(db, phone)
         if not farmer:
@@ -345,7 +346,7 @@ async def _handle_booking_flow(
                 expected_date=d,
                 unit="quintal",
                 centre_id=uuid.UUID(centre["centre_id"]),
-                slot_id=uuid.UUID(slot["id"]),
+                slot_id=uuid.UUID(chosen_slot["id"]),
             )
         except ValidationError as e:  # noqa: BLE001
             return str(e)
@@ -361,7 +362,7 @@ async def _handle_booking_flow(
             f"Qty: {booking.quantity} {booking.unit}\n"
             f"Centre: {centre.get('name', '')}\n"
             f"Date: {format_date(d)}\n"
-            f"Slot: {slot['label']}\n"
+            f"Slot: {chosen_slot['label']}\n"
             f"Status: {booking.status.value}\n"
             f"CANCEL or RESCHEDULE if this changes."
         )
@@ -382,7 +383,7 @@ async def _handle_command(
         if session.state.startswith("bk_"):
             reply = await _handle_booking_flow(db, session, text, phone)
         else:
-            reply = await _handle_registration_flow(session, text, phone)
+            reply = await _handle_registration_flow(db, session, text, phone)
         if reply:
             return reply
 
@@ -739,9 +740,11 @@ async def handle_incoming_sms(request: Request) -> dict[str, str]:
             await db.commit()
             return {"status": "duplicate"}
 
+        before = await outbox_service.max_id(db)
         # Process message
         reply = await _handle_command(db, phone, text, session)
         await db.commit()
+        await outbox_service.publish_after(db, after=before)
 
     # Send reply (best-effort: a delivery failure must not make the webhook
     # error, or SMS Gate would retry the whole incoming webhook and duplicate it)

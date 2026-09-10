@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.exceptions import NotFoundError, ValidationError
+from app.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models.centre import CentreCrop
 from app.models.payment import Payment, PaymentStatus
 from app.models.procurement import Procurement
@@ -23,6 +23,15 @@ class PaymentService:
         self, db: AsyncSession, procurement: Procurement, client_event_id: uuid.UUID | None = None
     ) -> Payment:
         """Backend-computed payment. Never trusts a frontend amount."""
+        existing = await db.execute(
+            select(Payment).where(
+                Payment.procurement_id == procurement.id,
+                Payment.status != PaymentStatus.CANCELLED,
+            )
+        )
+        if existing.scalar_one_or_none():
+            raise ConflictError("Payment already exists for this procurement")
+
         booking = await booking_service.get_by_id(db, procurement.booking_id)
 
         rate = await self._applicable_rate(db, booking)

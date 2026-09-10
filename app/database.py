@@ -1,3 +1,4 @@
+import enum
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -22,9 +23,9 @@ class Base(DeclarativeBase):
     pass
 
 
-def enum_values(enum_cls: type) -> list[str]:
+def enum_values(enum_cls: type[enum.Enum]) -> list[str]:
     """Persist the .value of enum members (lowercase) to match DB enums."""
-    return [member.value for member in enum_cls]
+    return [str(member.value) for member in enum_cls]
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

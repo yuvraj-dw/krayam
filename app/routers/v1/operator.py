@@ -1,3 +1,4 @@
+import hmac
 import uuid
 
 from fastapi import APIRouter, Depends, Header
@@ -6,11 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_operator, require_same_centre
-from app.exceptions import AuthorizationError
+from app.exceptions import AuthorizationError, ValidationError
 from app.models.booking import Booking
 from app.models.operator import Operator
-from app.models.payment import Payment, PaymentStatus
-from app.models.procurement import Procurement
+from app.models.payment import PaymentStatus
 from app.models.queue import QueueEntry
 from app.schemas.operations import (
     CheckInRequest,
@@ -77,18 +77,19 @@ async def operator_register(
     body: OperatorRegisterRequest,
     x_service_key: str = Header(default=""),
     db: AsyncSession = Depends(get_db),
-) -> Operator:
+) -> OperatorResponse:
     if not settings.SUPABASE_SERVICE_KEY:
         raise AuthorizationError("Operator registration is disabled")
-    if x_service_key != settings.SUPABASE_SERVICE_KEY:
+    if not hmac.compare_digest(x_service_key, settings.SUPABASE_SERVICE_KEY):
         raise AuthorizationError("Invalid service key")
-    return await operator_service.register(
+    op = await operator_service.register(
         db,
         name=body.name,
         phone=body.phone,
         password=body.password,
         centre_id=body.centre_id,
     )
+    return OperatorResponse.model_validate(op)
 
 
 @router.post("/check-in", response_model=QueueEntryResponse)
@@ -96,7 +97,7 @@ async def check_in_farmer(
     body: CheckInRequest,
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> QueueEntry:
+) -> QueueEntryResponse:
     before = await outbox_service.max_id(db)
     entry = await queue_service.check_in(
         db, booking_id=body.booking_id, centre_id=operator.centre_id
@@ -109,7 +110,7 @@ async def check_in_farmer(
 async def call_next(
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> QueueEntry | None:
+) -> QueueEntryResponse | None:
     before = await outbox_service.max_id(db)
     entry = await queue_service.call_next(db, operator.centre_id)
     await outbox_service.publish_after(db, centre_id=operator.centre_id, after=before)
@@ -138,7 +139,7 @@ async def mark_no_show(
     queue_entry_id: uuid.UUID,
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> QueueEntry:
+) -> QueueEntryResponse:
     await _require_own_entry(db, queue_entry_id, operator)
     before = await outbox_service.max_id(db)
     entry = await queue_service.mark_no_show(db, queue_entry_id)
@@ -151,7 +152,7 @@ async def start_processing(
     queue_entry_id: uuid.UUID,
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> QueueEntry:
+) -> QueueEntryResponse:
     await _require_own_entry(db, queue_entry_id, operator)
     before = await outbox_service.max_id(db)
     entry = await queue_service.start_processing(db, queue_entry_id)
@@ -164,7 +165,7 @@ async def complete_processing(
     queue_entry_id: uuid.UUID,
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> QueueEntry:
+) -> QueueEntryResponse:
     await _require_own_entry(db, queue_entry_id, operator)
     before = await outbox_service.max_id(db)
     entry = await queue_service.complete_processing(db, queue_entry_id)
@@ -177,7 +178,7 @@ async def record_procurement(
     body: ProcurementRecordRequest,
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> Procurement:
+) -> ProcurementResponse:
     await _require_own_booking(db, body.booking_id, operator)
     before = await outbox_service.max_id(db)
     procurement = await procurement_service.record(
@@ -199,7 +200,7 @@ async def initiate_payment(
     procurement_id: uuid.UUID,
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> Payment:
+) -> PaymentResponse:
     procurement = await procurement_service.get_by_id(db, procurement_id)
     await _require_own_booking(db, procurement.booking_id, operator)
     before = await outbox_service.max_id(db)
@@ -228,7 +229,7 @@ async def verify_payment(
     body: PaymentReviewRequest,
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> Payment:
+) -> PaymentResponse:
     payment = await payment_service.get_by_id(db, payment_id)
     procurement = await procurement_service.get_by_id(db, payment.procurement_id)
     await _require_own_booking(db, procurement.booking_id, operator)
@@ -253,9 +254,19 @@ async def entity_events(
     entity_id: uuid.UUID,
     operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
-) -> list:
+) -> list[EventResponse]:
     if entity_type == "booking":
         await _require_own_booking(db, entity_id, operator)
     elif entity_type == "queue_entry":
         await _require_own_entry(db, entity_id, operator)
-    return await event_service.list_for_entity(db, entity_type, entity_id)
+    elif entity_type == "procurement":
+        proc = await procurement_service.get_by_id(db, entity_id)
+        await _require_own_booking(db, proc.booking_id, operator)
+    elif entity_type == "payment":
+        pmt = await payment_service.get_by_id(db, entity_id)
+        proc = await procurement_service.get_by_id(db, pmt.procurement_id)
+        await _require_own_booking(db, proc.booking_id, operator)
+    else:
+        raise ValidationError(f"Unsupported entity type: {entity_type}")
+    events = await event_service.list_for_entity(db, entity_type, entity_id)
+    return [EventResponse.model_validate(e) for e in events]

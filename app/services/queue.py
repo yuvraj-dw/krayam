@@ -243,7 +243,11 @@ class QueueService:
     ) -> int:
         """Rule-based ETA in minutes. Fallback when ML module unavailable."""
         waiting = await self.list_waiting(db, centre_id)
-        ahead = (position - 1) if position else len(waiting)
+        ahead = (
+            max(0, position - 1)
+            if position is not None and position > 0
+            else len(waiting)
+        )
         cycles = ahead // ACTIVE_COUNTERS
         return cycles * AVG_PROCESS_MINUTES
 

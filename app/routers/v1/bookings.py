@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_farmer
 from app.exceptions import AuthorizationError
-from app.models.booking import Booking
 from app.models.farmer import Farmer
 from app.schemas.procurement import (
     BookingCreate,
@@ -28,7 +27,7 @@ async def create_booking(
     body: BookingCreate,
     farmer: Farmer = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
-) -> Booking:
+) -> BookingResponse:
     before = await outbox_service.max_id(db)
     booking = await booking_service.create(
         db,
@@ -53,7 +52,7 @@ async def create_booking(
 async def list_my_bookings(
     farmer: Farmer = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
-) -> list[Booking]:
+) -> list[BookingResponse]:
     return [
         BookingResponse.model_validate(b)
         for b in await booking_service.list_for_farmer(db, farmer.id)
@@ -86,7 +85,7 @@ async def get_booking(
     booking_id: uuid.UUID,
     farmer: Farmer = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
-) -> Booking:
+) -> BookingResponse:
     booking = await booking_service.get_by_id(db, booking_id)
     if booking.farmer_id != farmer.id:
         raise AuthorizationError("Not your booking")
@@ -98,7 +97,7 @@ async def cancel_booking(
     booking_id: uuid.UUID,
     farmer: Farmer = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
-) -> Booking:
+) -> BookingResponse:
     booking = await booking_service.get_by_id(db, booking_id)
     if booking.farmer_id != farmer.id:
         raise AuthorizationError("Not your booking")
@@ -119,7 +118,7 @@ async def reschedule_booking(
     body: BookingReschedule,
     farmer: Farmer = Depends(get_current_farmer),
     db: AsyncSession = Depends(get_db),
-) -> Booking:
+) -> BookingResponse:
     booking = await booking_service.get_by_id(db, booking_id)
     if booking.farmer_id != farmer.id:
         raise AuthorizationError("Not your booking")

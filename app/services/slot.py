@@ -7,10 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models.booking import Booking, BookingStatus
 from app.models.slot import Slot
+from app.schemas.procurement import SlotCreate
 
 
 class SlotService:
-    async def create(self, db: AsyncSession, data) -> Slot:
+    async def create(self, db: AsyncSession, data: SlotCreate) -> Slot:
         existing = await db.execute(
             select(Slot).where(
                 Slot.centre_id == data.centre_id,
@@ -43,9 +44,12 @@ class SlotService:
         return slot
 
     async def refresh_availability(self, db: AsyncSession, centre_id: uuid.UUID) -> None:
-        """Recount current bookings for a centre's slots and update availability."""
-        for slot in await self.list_available(db, centre_id):
-            count = await db.scalar(
+        """Recount current bookings for all slots of a centre and update availability."""
+        all_slots = list(
+            (await db.execute(select(Slot).where(Slot.centre_id == centre_id))).scalars().all()
+        )
+        for slot in all_slots:
+            raw_count = await db.scalar(
                 select(func.count(Booking.id)).where(
                     Booking.slot_id == slot.id,
                     Booking.status.notin_(
@@ -53,6 +57,7 @@ class SlotService:
                     ),
                 )
             )
+            count = int(raw_count or 0)
             slot.current_bookings = count
             slot.is_available = count < slot.max_bookings
             if count > slot.max_bookings:

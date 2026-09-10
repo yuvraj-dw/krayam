@@ -11,41 +11,26 @@
 
 Built for **Smart India Hackathon 2026**.
 
-Krayam is a procurement platform that lets farmers sell their harvest to
-processing centres (mandis) the way they already talk to people — by texting an
-SMS from a basic feature phone — while offering the same experience through web
-and mobile frontends. Centre operators run the queue, record procurements, and
-process payments.
+Krayam is an agricultural procurement platform that lets farmers sell their harvest to processing centres (mandis) the way they already communicate — by sending simple SMS messages from a basic feature phone — while offering the exact same real-time capabilities through modern web and mobile applications. Centre operators manage arrival queues, record physical quality inspections, verify procurements, and process payments.
 
-> **This repository** contains the **backend API** and the **SMS service** of
-> the project. The web/mobile frontends live in separate repositories and talk
-> to this backend over the REST API. The SMS channel is fully self-contained
-> here: an inbound webhook, a conversational state machine, and Gemini-powered
-> natural-language booking.
+> **This repository** contains the core **backend API**, **SMS webhook & conversation engine**, **real-time SSE event bus**, and **offline sync engine**. The web and mobile frontends interface with this backend over the standardized REST API and Server-Sent Events (SSE).
+
+---
 
 ## Highlights
 
-- **Dual channel, one business layer.** Registration, booking, status, queue,
-  payment and history work identically over the REST API and over SMS. A
-  booking made by SMS shows up in the operator queue and vice versa.
-- **Natural-language SMS.** Free-form Hinglish/English texts (e.g. *"Mujhe 30
-  quintal soybean bechna hai 15 September 2026"*) are parsed by **Gemini** into
-  a structured intent and routed into the booking flow. The LLM is consulted
-  only when no conversation is in progress and is read-only — all validation
-  and writes go through the normal services.
-- **Automated SMS notifications** — off-channel lifecycle events (booking confirmed, cancelled, rescheduled, procurement accepted, payment initiated & confirmed) are pushed to a farmer's phone via SMS.
-- **Realtime updates + offline centre sync.** Operators log in with phone + password; every mutation is written to a unified event log that streams to live clients over SSE and lets a centre's PWA operate offline and sync later — same log, same order, no polling.
-- **Operator analytics + load forecast.** History aggregates (served farmers, procured quantity, wait/processing times, peak hours, no-shows, cancellations, payments) and a deterministic per-centre load forecast with high-load warnings — `GET /api/v1/analytics/summary` and `GET /api/v1/analytics/forecast`.
-- **Conversational state machine.** SMS flows advance step by step
-  (register → book → centre → slot → confirm) with session deduplication and a
-  full message audit log in the database.
-- **Phone-first auth.** OTP codes delivered by SMS, JWTs for the API. The
-  verify endpoint returns `is_registered` so the app knows whether to finish
-  onboarding.
+- **Dual channel, one business layer:** Registration, booking, status, queue, procurement, payment, and history work identically over the REST API and over SMS. An appointment booked via SMS instantly appears on the operator dashboard queue, and updates made at the centre immediately notify the farmer.
+- **Natural-language SMS (Gemini NLP):** Free-form English and Hinglish texts (e.g., *"Mujhe 30 quintal soybean bechna hai 15 September 2026"*) are parsed by **Gemini** into structured intents and routed into the booking workflow. The LLM is consulted only when no active session is in progress and is strictly read-only — all state transitions and writes pass through deterministic business validation.
+- **Transactional Outbox & Live Real-Time Events:** Every booking, queue, procurement, and payment state mutation emits an ordered event into the `outbox_events` table within the primary DB transaction. Once committed, events are published instantly to an in-memory event bus and streamed over **Server-Sent Events (SSE)** to connected operators and farmers without database polling.
+- **Offline Centre Sync:** Mandi centres experiencing connectivity drops can run offline progressive web apps (PWAs). The offline client caches snapshots, operates locally, and re-syncs batches of timestamped events via `POST /api/v1/sync/{centre_id}/events`. Server-side deduplication using `client_event_id` guarantees idempotent reconciliation.
+- **Operator Analytics & Load Forecasting:** Deterministic per-centre metrics (`GET /api/v1/analytics/summary`) aggregate farmer throughput, procured tonnage, average wait and processing durations, peak arrival hours, cancellation rates, and payment settlements. A capacity forecasting endpoint (`GET /api/v1/analytics/forecast`) computes anticipated load percentages with proactive overload warnings.
+- **Conversational State Machine:** Multi-step SMS flows (register, book, select centre, select slot, confirm) are managed via the `sms_sessions` database table with 30-minute expiry, automatic step resumption, and idempotency protection against duplicate SMS gateway deliveries.
+- **Automated Lifecycle Notifications:** Automated SMS alerts notify farmers when appointments are confirmed, cancelled, or rescheduled, when produce is accepted, and when payments are initiated or confirmed.
+- **Enterprise Access Control & Timing-Safe Security:** Operator authentication uses PBKDF2 password hashing (100,000 iterations via standard library `hashlib`) with isolated centre-level scoping. Service keys use constant-time comparisons (`hmac.compare_digest`), preventing timing side-channel attacks.
 
-## How it works
+---
 
-Two entry points, one business layer.
+## Architectural Architecture
 
 ```
  farmers (web / mobile app)          farmers (feature phone)
@@ -56,112 +41,283 @@ Two entry points, one business layer.
        +------------> services <---------+
               auth · booking · queue · payment · intent · slot
        |
-       v
-  PostgreSQL (Supabase) — auth, SMS sessions/audit, queues, procurements, payments
+       +---------> Transactional Outbox (PostgreSQL)
+                        |
+                        v
+               Event Bus (asyncio) ------> SSE Streams (/api/v1/events/*)
+                        |
+                        v
+               Offline Sync Engine (/api/v1/sync/*)
 ```
 
-> **AI scope:** The *only* AI in Krayam is the Gemini natural-language parser in the SMS channel. Centre ranking, wait-time ETA, payment-anomaly flags, operator analytics, load forecasts, realtime pushes, and offline sync are all deterministic, rule-based logic — there is no ML behind them.
-
-## Tech stack
-
-| Layer | Choice |
-|---|---|
-| Language / runtime | Python 3.10+, async |
-| API | FastAPI + Pydantic v2 |
-| Database | PostgreSQL on Supabase · SQLAlchemy 2 async ORM + asyncpg · Alembic migrations |
-| Auth | OTP by SMS (DB-stored codes) · python-jose JWTs (HS256) |
-| SMS | SMS Gate (Android SMS gateway) inbound webhook + outbound API |
-| NLP | Gemini via OpenAI-compatible endpoint (`openai` SDK), model `gemini-3-flash-preview` |
-| Geo / mandi lookup | geopy/Nominatim + India Pincode API |
-| Tooling | ruff (lint) · mypy (types) |
-
-## Project layout
-
-```
-app/
-  main.py            FastAPI app, CORS, exception handlers, OpenAPI title
-  config.py          env-driven settings (pydantic-settings)
-  database.py        async engine + session factory
-  routers/
-    v1/              REST API — auth, farmers, centres, slots, bookings, operator
-    sms/webhook.py   /sms/incoming entry point + conversation state machine
-  services/          business logic — booking, queue, payment, procurement,
-                     intent (Gemini NLP), slot, centre/mandi/location, sms_gate ...
-  models/            SQLAlchemy tables (incl. sms_sessions message audit log)
-  schemas/           Pydantic request/response models
-  exceptions.py      unified error envelope
-```
-
-## Running locally
-
-1. Create `.env` from `.env.example` and fill in: `DATABASE_URL`,
-   `SMS_GATE_USERNAME` / `SMS_GATE_PASSWORD`, `JWT_SECRET_KEY`, and for
-   natural-language SMS `LLM_ENABLED=true` + `LLM_API_KEY` (`.env` is gitignored).
-2. Apply migrations: `alembic upgrade head`
-3. Seed demo centres and slots — the dev seeding script is intentionally kept
-   out of this repo, so create the demo data through the API: `POST /api/v1/centres`
-   then `POST /api/v1/slots`.
-4. Run the API: `uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload`
-5. Expose the SMS webhook with a tunnel: `cloudflared tunnel run`
-   (SMS Gate posts to `https://<tunnel>/sms/incoming`).
-
-Interactive API docs → `http://127.0.0.1:8000/docs` · Health → `GET /api/v1/health`.
-One-click launchers: `start_backend.bat` / `stop_backend.bat` (local, untracked).
-
-## API overview
-
-All REST endpoints live under **`/api/v1`**. Auth is phone-based OTP + JWT
-(`Authorization: Bearer <token>`); verify returns `is_registered` so the client
-knows whether to complete the profile via `/auth/register`.
-
-| Group | Endpoints |
-|---|---|
-| Health | `GET /health` |
-| Auth | `POST /auth/otp/send` · `POST /auth/otp/verify` · `POST /auth/register` |
-| Farmers | `GET /farmers/me` · `PUT /farmers/me` |
-| Centres | `POST /centres` · `GET /centres` · `GET/PATCH /centres/{id}` · `POST /centres/{id}/crops` · `DELETE /centres/{id}` |
-| Slots | `POST /slots` · `GET /slots?centre_id=&on_date=` |
-| Bookings | `POST /bookings` · `GET /bookings` · `POST /bookings/recommend` · `GET /bookings/{id}` · `POST /bookings/{id}/cancel` · `POST /bookings/{id}/reschedule` |
-| Operator | `POST /operator/check-in` · `POST /operator/call-next` · `GET /operator/queue/{centre_id}` · queue start/complete/no-show · `POST /operator/procurements` · procurement payment + review · `POST /operator/payments/{id}/verify` · `GET /operator/events/{type}/{id}` |
-| Operator auth | `POST /operator/login` · `POST /operator/register` |
-| Realtime | `GET /events/stream?centre_id=` (operator SSE) · `GET /events/me` (farmer SSE) |
-| Offline sync | `GET /sync/{centre_id}/snapshot` · `GET /sync/{centre_id}/events?cursor=` · `POST /sync/{centre_id}/events` |
-| Analytics | `GET /analytics/summary?centre_id=&from=&to=` · `GET /analytics/forecast?centre_id=&date=` |
-| SMS | `POST /sms/incoming` (SMS Gate webhook) |
-
-Errors always use `{ "error": { "code", "message" } }` with codes like
-`AUTH_ERROR` (401), `FORBIDDEN` (403), `NOT_FOUND` (404), `VALIDATION_ERROR` (422).
-
-## SMS service
-
-- Accepts both the SMS Gate **envelope** and **flat** webhook payloads and
-  deduplicates on `messageId`.
-- Commands: `HELP REGISTER BOOK STATUS QUEUE CENTRE PAYMENT HISTORY CANCEL RESCHEDULE`.
-- Multi-step flows live in the `sms_sessions` **database table** (each session
-  carries `state` + `context`, 30-min expiry); dates are entered as **DD-MM-YYYY**.
-- Free-text fallback: idle, non-command messages go to Gemini (30s timeout) and
-  are routed by intent; `book` prefills the flow at the first missing field
-  instead of guessing.
-
-## Environment variables
-
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | asyncpg Postgres connection string |
-| `SUPABASE_URL` / `SUPABASE_KEY` / `SUPABASE_SERVICE_KEY` | Supabase (optional) |
-| `SMS_GATE_API_URL` / `SMS_GATE_USERNAME` / `SMS_GATE_PASSWORD` | SMS Gate outbound API |
-| `JWT_SECRET_KEY` / `JWT_ALGORITHM` / `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | JWT auth |
-| `OTP_LENGTH` / `OTP_EXPIRY_MINUTES` / `OTP_MAX_ATTEMPTS` / `OTP_RESEND_COOLDOWN_SECONDS` | OTP flow |
-| `LLM_ENABLED` / `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` / `LLM_TIMEOUT_SECONDS` | Gemini NLP for natural-language SMS |
-| `SMS_NOTIFICATIONS_ENABLED` | Set `false` to log notification SMS without sending (interactive replies are unaffected) |
-| `APP_NAME` / `DEBUG` / `ALLOWED_ORIGINS` | App-level |
-
-## Notes
-
-- Operator endpoints require JWT authentication and are scoped to the operator's assigned centre.
-- `DELETE /centres/{id}` and farmer deactivation are soft deletes.
-- Phone numbers are stored in E.164 (`+91...`).
+> **AI Scope Note:** The *only* AI component in Krayam is the Gemini natural-language intent extractor in the SMS channel. Centre recommendation scoring, wait-time estimation, payment anomaly detection, capacity forecasting, SSE event broadcasting, and offline conflict resolution are completely deterministic, rule-based systems.
 
 ---
 
-Built for **Smart India Hackathon (SIH) 2026**.
+## Tech Stack
+
+| Layer | Choice |
+|---|---|
+| **Language / Runtime** | Python 3.10+, fully asynchronous (`asyncio`) |
+| **Framework** | FastAPI + Pydantic v2 |
+| **Database** | PostgreSQL · SQLAlchemy 2.0 Async ORM · asyncpg driver |
+| **Database Migrations** | Alembic |
+| **Authentication** | SMS OTP (DB-stored with rate limiting & salt) · JWT (`python-jose`, HS256) |
+| **Operator Passwords** | PBKDF2-SHA256 (100,000 iterations, stdlib `hashlib`) |
+| **Realtime Streaming** | Server-Sent Events (SSE) backed by in-memory `asyncio.Queue` event bus |
+| **SMS Gateway** | SMS Gate (Android SMS Gateway) inbound webhook + outbound REST API |
+| **Natural Language** | Google Gemini via OpenAI-compatible endpoint (`openai` SDK, `gemini-3-flash-preview`) |
+| **Geolocation & Mandi Data** | `geopy` / Nominatim + India Pincode API |
+| **Code Quality & Testing** | `ruff` (linter/formatter) · `mypy` (strict static typing) · `unittest` (async test suite) |
+
+---
+
+## Project Structure
+
+```
+SIH/
+├── alembic/                      # Database migrations
+│   ├── env.py
+│   └── versions/                 # Revision scripts (001_initial, 002_offline_sync)
+├── app/
+│   ├── config.py                 # Pydantic Settings with .env loading
+│   ├── database.py               # Async SQLAlchemy engine, session maker, base model
+│   ├── dependencies.py           # FastApi dependencies (auth, roles, centre scoping)
+│   ├── exceptions.py             # Standardized error envelope & handlers
+│   ├── main.py                   # FastAPI application initialization & middleware
+│   ├── models/                   # SQLAlchemy ORM models
+│   │   ├── booking.py            # Bookings & lifecycle statuses
+│   │   ├── centre.py             # Procurement centres & accepted crops
+│   │   ├── event.py              # Audit events log
+│   │   ├── farmer.py             # Farmers & OTP verifications
+│   │   ├── operator.py           # Centre operators & auth
+│   │   ├── outbox.py             # Outbox event log for realtime & offline sync
+│   │   ├── payment.py            # Payments, verification & anomalies
+│   │   ├── procurement.py        # Produce intake & grading records
+│   │   ├── queue.py              # Centre arrival queues & positions
+│   │   ├── slot.py               # Time slots & dynamic booking capacity
+│   │   └── sms.py                # SMS message logs & conversation sessions
+│   ├── routers/
+│   │   ├── sms/webhook.py        # /sms/incoming entry point & state machine
+│   │   └── v1/                   # REST endpoints (auth, bookings, operator, sync, etc.)
+│   ├── schemas/                  # Pydantic validation schemas
+│   └── services/                 # Core business services (booking, payment, outbox, etc.)
+├── tests/                        # Comprehensive automated test suite
+│   ├── test_health.py            # Health & readiness checks
+│   ├── test_auth.py              # OTP, login, security, role enforcement
+│   ├── test_centres.py           # Centre CRUD, crop management, 404 validation
+│   ├── test_slots.py             # Slot availability, full slot recovery
+│   ├── test_bookings.py          # Booking creation, capacity locks, cancellation
+│   ├── test_operator.py          # Operator queue, procurement, payment & IDOR security
+│   ├── test_analytics.py         # Summary metrics & capacity forecasting
+│   ├── test_events_sse.py        # SSE streams & authorization
+│   ├── test_sync.py              # Offline sync snapshot, batch apply & cursor pull
+│   ├── test_sms.py               # Webhook parsing, idempotency & live event publishing
+│   └── run_all.py                # Complete test runner harness
+├── pyproject.toml                # Project metadata & tool configuration
+├── alembic.ini                   # Alembic configuration
+└── README.md
+```
+
+---
+
+## Running Locally
+
+### 1. Environment Setup
+Clone the repository and set up a Python virtual environment:
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+### 2. Configure Environment Variables
+Create `.env` in the root folder (referenced from `.env.example`):
+```ini
+DATABASE_URL=postgresql+asyncpg://postgres:<password>@<host>:5432/<dbname>
+JWT_SECRET_KEY=<your-secret-key>
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRE_MINUTES=10080
+
+# Operator Registration
+SUPABASE_SERVICE_KEY=<secret-key-for-operator-registration>
+
+# SMS Gate Integration
+SMS_GATE_API_URL=https://api.sms-gate.app/3rdparty/v1
+SMS_GATE_USERNAME=<username>
+SMS_GATE_PASSWORD=<password>
+SMS_NOTIFICATIONS_ENABLED=true
+
+# Gemini NLP (Optional, for natural-language SMS)
+LLM_ENABLED=true
+LLM_API_KEY=<your-gemini-api-key>
+LLM_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+LLM_MODEL=gemini-2.5-flash
+```
+
+### 3. Apply Database Migrations
+```powershell
+alembic upgrade head
+```
+
+### 4. Start the Application
+```powershell
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+- Interactive Swagger UI: `http://127.0.0.1:8000/docs`
+- Health check: `http://127.0.0.1:8000/api/v1/health`
+
+### 5. Expose SMS Webhook (Optional for Live SMS Testing)
+When receiving SMS callbacks from SMS Gate:
+```powershell
+cloudflared tunnel --url http://127.0.0.1:8000
+```
+Configure `https://<your-tunnel-url>/sms/incoming` as the webhook URL in your SMS Gate application.
+
+---
+
+## Running Automated Tests & Quality Gates
+
+The backend includes a comprehensive test suite covering all routes, services, edge cases, role enforcement, and regression scenarios without requiring external test runners:
+
+```powershell
+# Run the complete test suite
+python tests/run_all.py
+
+# Run static linter
+python -m ruff check app/ tests/
+
+# Run type checker
+python -m mypy app/ --no-incremental
+```
+
+---
+
+## Complete API Reference
+
+All REST endpoints are rooted at **`/api/v1`**. Responses and errors follow strict, uniform schemas.
+
+### Authentication & Profile (`/auth`, `/farmers`)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/v1/auth/otp/send` | None | Sends a 6-digit OTP to the specified 10-digit Indian phone number with resend cooldown and rate limiting. |
+| `POST` | `/api/v1/auth/otp/verify` | None | Verifies the OTP. Returns a JWT access token and `is_registered` boolean flag. |
+| `POST` | `/api/v1/auth/register` | Pending Token | Completes farmer onboarding using a temporary registration token. |
+| `GET` | `/api/v1/farmers/me` | Farmer JWT | Returns profile details for the authenticated farmer. |
+| `PUT` | `/api/v1/farmers/me` | Farmer JWT | Updates farmer name, village, district, state, pincode, or coordinates. |
+
+### Procurement Centres & Slots (`/centres`, `/slots`)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/v1/centres` | None | Scaffolds a new procurement centre (operating hours, location, capacity). |
+| `GET` | `/api/v1/centres` | None | Lists active procurement centres with optional `?crop=` filtering. |
+| `GET` | `/api/v1/centres/{id}` | None | Retrieves centre details and currently accepted crop varieties with rates. |
+| `PATCH`| `/api/v1/centres/{id}` | None | Updates operational parameters (name, capacity, hours). |
+| `POST` | `/api/v1/centres/{id}/crops` | None | Adds or reactivates an accepted crop with rate per quintal. |
+| `DELETE`|`/api/v1/centres/{id}` | None | Soft-deactivates a centre. |
+| `POST` | `/api/v1/slots` | None | Creates a bookable time window with date, start/end time, and max capacity. |
+| `GET` | `/api/v1/slots` | None | Lists available slots for a centre with capacity remaining on a given date. |
+
+### Bookings (`/bookings`)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/v1/bookings` | Farmer JWT | Books a procurement appointment. Validates slot capacity and increments booking counters. Emits outbox event. |
+| `GET` | `/api/v1/bookings` | Farmer JWT | Lists historical and upcoming bookings for the authenticated farmer. |
+| `POST` | `/api/v1/bookings/recommend` | Farmer JWT | Returns recommended centres sorted by proximity and anticipated load. |
+| `GET` | `/api/v1/bookings/{id}` | Farmer JWT | Retrieves booking status and details (enforces ownership). |
+| `POST` | `/api/v1/bookings/{id}/cancel` | Farmer JWT | Cancels booking, releases slot capacity, and emits realtime cancellation event. |
+| `POST` | `/api/v1/bookings/{id}/reschedule` | Farmer JWT | Reschedules booking date, centre, or slot, updating capacity counts across centres. |
+
+### Operator Operations (`/operator`)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/api/v1/operator/register` | Service Key | Creates an operator account bound to a specific centre (`X-Service-Key` header). |
+| `POST` | `/api/v1/operator/login` | None | Authenticates operator using phone + password, returning scoped JWT. |
+| `POST` | `/api/v1/operator/check-in` | Operator JWT | Checks in a farmer on arrival. Assigns ordered queue position. |
+| `POST` | `/api/v1/operator/call-next` | Operator JWT | Advances the queue and marks the next waiting farmer as called. |
+| `GET` | `/api/v1/operator/queue/{centre_id}` | Operator JWT | Returns the live waiting queue for the operator's assigned centre. |
+| `POST` | `/api/v1/operator/queue/{id}/start` | Operator JWT | Marks weighbridge and inspection processing as started. |
+| `POST` | `/api/v1/operator/queue/{id}/complete` | Operator JWT | Marks processing as complete and cleans up the queue entry. |
+| `POST` | `/api/v1/operator/queue/{id}/no-show` | Operator JWT | Marks an unarrived booking as no-show and re-numbers the queue. |
+| `POST` | `/api/v1/operator/procurements` | Operator JWT | Records accepted quantity, unit, and grading notes for an appointment. |
+| `POST` | `/api/v1/operator/procurements/{id}/payment` | Operator JWT | Computes backend payment amount from centre rates and initiates payout. Guarded against duplicate initiation. |
+| `GET` | `/api/v1/operator/procurements/{id}/review` | Operator JWT | Returns payment review payload with anomaly detection flags. |
+| `POST` | `/api/v1/operator/payments/{id}/verify` | Operator JWT | Operator verifies or rejects payment settlement. |
+| `GET` | `/api/v1/operator/events/{type}/{id}` | Operator JWT | Retrieves audit event history for a booking, queue, procurement, or payment (strictly scoped to operator's centre). |
+
+### Real-Time Updates & Offline Sync (`/events`, `/sync`)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/events/stream?centre_id=` | Operator JWT | SSE connection streaming live centre-scoped events with replay via `Last-Event-ID`. |
+| `GET` | `/api/v1/events/me` | Farmer JWT | SSE connection streaming personal booking, queue, and payment alerts to the farmer. |
+| `GET` | `/api/v1/sync/{centre_id}/snapshot` | Operator JWT | Downloads full offline snapshot: centre data, crops, active slots, today's bookings, and waitlist. |
+| `GET` | `/api/v1/sync/{centre_id}/events?cursor=` | Operator JWT | Pulls incremental mutations occurring after `cursor` for offline client catch-up. |
+| `POST` | `/api/v1/sync/{centre_id}/events` | Operator JWT | Submits batch of offline-generated events. Idempotently reconciles with deduplication. |
+
+### Analytics (`/analytics`)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/analytics/summary` | None | Aggregates farmers served, total tonnage, average waiting and processing minutes, peak hours, cancellations, and settlements across date range. |
+| `GET` | `/api/v1/analytics/forecast` | None | Predicts centre load percentage and warns if estimated volume exceeds capacity. |
+
+---
+
+## Unified Error Envelope
+
+All API errors return standardized HTTP status codes and structured JSON payloads:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Selected slot is at full capacity"
+  }
+}
+```
+
+| Code | Status | Meaning |
+|---|---|---|
+| `AUTH_ERROR` | 401 | Missing, malformed, expired, or role-mismatched JWT access token. |
+| `FORBIDDEN` | 403 | Authenticated operator attempting to access or modify resources of another centre. |
+| `NOT_FOUND` | 404 | Resource does not exist or has been soft-deleted. |
+| `CONFLICT` | 409 | Duplicate entity (e.g., slot already exists at that time, payment already initiated). |
+| `VALIDATION_ERROR` | 422 | Invalid payload fields, date in the past, or slot overcapacity. |
+| `RATE_LIMITED` | 429 | OTP resend frequency or attempt limit exceeded. |
+| `INTERNAL_ERROR` | 500 | Unhandled server error (sanitized message returned). |
+
+---
+
+## SMS Channel Commands & Flows
+
+Farmers can text the gateway phone number with standard commands or free-form messages:
+
+| Command | Action |
+|---|---|
+| `HELP` | Returns the list of available commands. |
+| `REGISTER` | Launches multi-step registration (Name → Pincode → Village → District → Confirmation). |
+| `BOOK` | Interactive appointment booking (Crop → Quantity → Date → Centre selection → Slot selection). |
+| `STATUS` | Checks current booking status, appointment date, and centre location. |
+| `QUEUE` | Displays current position in the centre queue and estimated wait time. |
+| `CENTRE` | Finds nearby procurement centres accepting crops based on the farmer's registered location. |
+| `PAYMENT` | Shows payout settlement status and amount for completed procurements. |
+| `HISTORY` | Summarizes past successful procurement records. |
+| `CANCEL <REF>` | Cancels the specified booking and releases the slot for other farmers. |
+| `RESCHEDULE <REF>` | Reschedules an existing appointment to a new date and time. |
+
+---
+
+## Security Audit & Invariants
+
+During comprehensive backend auditing, the following invariants were verified and hardened:
+1. **Constant-Time Cryptographic Equality:** All service keys and sensitive headers use `hmac.compare_digest` to prevent timing attacks.
+2. **Strict Centre Multi-Tenancy:** Centre operators can only access queue, booking, procurement, payment, and audit stream entities matching their assigned `centre_id`.
+3. **Database Token Integrity:** Tokens containing non-UUID subjects or invalid roles are caught at the dependency layer and rejected with `401 Unauthorized`, preventing database driver syntax crashes.
+4. **Duplicate Payment Prevention:** Procurement payouts cannot be initiated more than once; concurrent requests are rejected with `409 Conflict`.
+5. **No Secret Leaks:** Configuration, keys, and connection strings are managed strictly through environment variables.
+
+---
+
+## License
+
+Built for the **Smart India Hackathon (SIH) 2026**.
+All rights reserved.

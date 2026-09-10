@@ -23,13 +23,16 @@ async def get_current_farmer(
     token = credentials.credentials
     try:
         payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("role") != "farmer":
+            raise AuthenticationError("Farmer token expected")
         farmer_id: str | None = payload.get("sub")
         if farmer_id is None:
             raise AuthenticationError("Invalid token")
-    except JWTError as e:
-        raise AuthenticationError(f"Invalid token: {e}") from e
+        farmer_uuid = UUID(str(farmer_id))
+    except (JWTError, ValueError, TypeError) as e:
+        raise AuthenticationError("Invalid token") from e
 
-    result = await db.execute(select(Farmer).where(Farmer.id == farmer_id))
+    result = await db.execute(select(Farmer).where(Farmer.id == farmer_uuid))
     farmer = result.scalar_one_or_none()
     if farmer is None or not farmer.is_active:
         raise AuthenticationError("Farmer not found or inactive")
@@ -69,10 +72,11 @@ async def get_current_operator(
         operator_id = payload.get("sub")
         if operator_id is None or payload.get("centre_id") is None:
             raise AuthenticationError("Invalid operator token")
-    except JWTError as e:
-        raise AuthenticationError(f"Invalid token: {e}") from e
+        operator_uuid = UUID(str(operator_id))
+    except (JWTError, ValueError, TypeError) as e:
+        raise AuthenticationError("Invalid operator token") from e
 
-    result = await db.execute(select(Operator).where(Operator.id == operator_id))
+    result = await db.execute(select(Operator).where(Operator.id == operator_uuid))
     operator = result.scalar_one_or_none()
     if operator is None or not operator.is_active:
         raise AuthenticationError("Operator not found or inactive")

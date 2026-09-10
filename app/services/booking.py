@@ -22,13 +22,13 @@ class BookingService:
         self,
         db: AsyncSession,
         *,
-        farmer_id,
+        farmer_id: uuid.UUID,
         crop: str,
         quantity: float,
         expected_date: date,
         unit: str = "quintal",
-        centre_id=None,
-        slot_id=None,
+        centre_id: uuid.UUID | None = None,
+        slot_id: uuid.UUID | None = None,
         client_event_id: uuid.UUID | None = None,
     ) -> Booking:
         if quantity <= 0:
@@ -55,6 +55,8 @@ class BookingService:
         db.add(booking)
         await db.flush()
         await db.refresh(booking)
+        if booking.centre_id:
+            await slot_service.refresh_availability(db, booking.centre_id)
         await outbox_service.emit(
             db,
             event_type="booking.created",
@@ -74,26 +76,30 @@ class BookingService:
         )
         return booking
 
-    async def _validate_slot(self, db, slot_id, expected_date: date) -> None:
+    async def _validate_slot(
+        self, db: AsyncSession, slot_id: uuid.UUID, expected_date: date
+    ) -> None:
         slot = await slot_service.get_by_id(db, slot_id)
         if not slot.is_available or slot.date != expected_date:
             raise ValidationError("Selected slot is not available")
         if slot.current_bookings >= slot.max_bookings:
             raise ValidationError("Selected slot is at full capacity")
 
-    async def _validate_slot_for_centre(self, db, centre_id, expected_date: date) -> None:
+    async def _validate_slot_for_centre(
+        self, db: AsyncSession, centre_id: uuid.UUID, expected_date: date
+    ) -> None:
         available = await slot_service.list_available(db, centre_id, expected_date)
         if not available:
             raise ValidationError("No available slot on this date for this centre")
 
-    async def get_by_id(self, db, booking_id: uuid.UUID) -> Booking:
+    async def get_by_id(self, db: AsyncSession, booking_id: uuid.UUID) -> Booking:
         result = await db.execute(select(Booking).where(Booking.id == booking_id))
         booking = result.scalar_one_or_none()
         if not booking:
             raise NotFoundError("Booking not found")
         return booking
 
-    async def list_for_farmer(self, db, farmer_id) -> list[Booking]:
+    async def list_for_farmer(self, db: AsyncSession, farmer_id: uuid.UUID) -> list[Booking]:
         result = await db.execute(
             select(Booking)
             .where(Booking.farmer_id == farmer_id)
@@ -108,7 +114,7 @@ class BookingService:
         )
         return result.scalar_one_or_none()
 
-    async def transition(self, db, booking: Booking, to: BookingStatus) -> Booking:
+    async def transition(self, db: AsyncSession, booking: Booking, to: BookingStatus) -> Booking:
         """Validate and apply a booking status transition."""
         allowed = VALID_TRANSITIONS[booking.status]
         if to not in allowed:
@@ -118,13 +124,13 @@ class BookingService:
         booking.status = to
         await db.flush()
         await db.refresh(booking)
-        if booking.slot_id:
+        if booking.slot_id and booking.centre_id:
             with contextlib.suppress(Exception):
                 await slot_service.refresh_availability(db, booking.centre_id)
         return booking
 
     async def cancel(
-        self, db, booking: Booking, client_event_id: uuid.UUID | None = None
+        self, db: AsyncSession, booking: Booking, client_event_id: uuid.UUID | None = None
     ) -> Booking:
         booking = await self.transition(db, booking, BookingStatus.CANCELLED)
         await outbox_service.emit(
@@ -140,12 +146,12 @@ class BookingService:
         )
         return booking
 
-    async def confirm(self, db, booking: Booking) -> Booking:
+    async def confirm(self, db: AsyncSession, booking: Booking) -> Booking:
         return await self.transition(db, booking, BookingStatus.CONFIRMED)
 
     async def reschedule(
         self,
-        db,
+        db: AsyncSession,
         booking: Booking,
         data: BookingReschedule,
         client_event_id: uuid.UUID | None = None,
@@ -169,12 +175,17 @@ class BookingService:
         elif new_centre:
             await self._validate_slot_for_centre(db, new_centre, new_date)
 
+        old_centre_id = booking.centre_id
         booking.expected_date = new_date
         booking.centre_id = new_centre
         booking.slot_id = new_slot
         booking.status = BookingStatus.CONFIRMED
         await db.flush()
         await db.refresh(booking)
+        if booking.centre_id:
+            await slot_service.refresh_availability(db, booking.centre_id)
+        if old_centre_id and old_centre_id != booking.centre_id:
+            await slot_service.refresh_availability(db, old_centre_id)
         await outbox_service.emit(
             db,
             event_type="booking.rescheduled",

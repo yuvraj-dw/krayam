@@ -58,7 +58,7 @@ def format_currency(amount: float) -> str:
         last3 = s[-3:]
         rest = s[:-3]
         # group remaining from the right in pairs
-        groups = []
+        groups: list[str] = []
         while rest:
             groups.insert(0, rest[-2:])
             rest = rest[:-2]
