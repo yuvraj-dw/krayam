@@ -111,12 +111,16 @@ class OTPService:
 
 
 class AuthService:
-    def create_access_token(self, farmer_id: str, role: str = "farmer") -> str:
+    def create_access_token(
+        self, subject: str, role: str = "farmer", claims: dict | None = None
+    ) -> str:
         """Create a JWT access token."""
         expire = datetime.now(timezone.utc) + timedelta(
             minutes=settings.JWT_ACCESS_TOKEN_EXPIRE_MINUTES
         )
-        payload = {"sub": farmer_id, "role": role, "exp": expire}
+        payload = {"sub": subject, "role": role, "exp": expire}
+        if claims:
+            payload.update(claims)
         return jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
 
     async def get_or_create_farmer(self, db: AsyncSession, phone: str) -> tuple[Farmer, bool]:

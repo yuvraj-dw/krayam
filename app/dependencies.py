@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from fastapi import Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
@@ -6,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
-from app.exceptions import AuthenticationError
+from app.exceptions import AuthenticationError, AuthorizationError
 from app.models.farmer import Farmer
+from app.models.operator import Operator
 
 settings = get_settings()
 security = HTTPBearer()
@@ -52,3 +55,30 @@ async def get_pending_phone(
     if not isinstance(sub, str) or not sub.startswith("pending:"):
         raise AuthenticationError("Registration requires a pending-verification token")
     return sub.split(":", 1)[1]
+
+
+async def get_current_operator(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db),
+) -> Operator:
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        if payload.get("role") != "operator":
+            raise AuthenticationError("Operator token expected")
+        operator_id = payload.get("sub")
+        if operator_id is None or payload.get("centre_id") is None:
+            raise AuthenticationError("Invalid operator token")
+    except JWTError as e:
+        raise AuthenticationError(f"Invalid token: {e}") from e
+
+    result = await db.execute(select(Operator).where(Operator.id == operator_id))
+    operator = result.scalar_one_or_none()
+    if operator is None or not operator.is_active:
+        raise AuthenticationError("Operator not found or inactive")
+    return operator
+
+
+def require_same_centre(given: UUID, operator_centre_id: UUID) -> None:
+    if given != operator_centre_id:
+        raise AuthorizationError("Centre does not match the operator's centre")
