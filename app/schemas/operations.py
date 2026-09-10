@@ -9,11 +9,6 @@ from app.models.queue import QueueStatus
 
 class CheckInRequest(BaseModel):
     booking_id: UUID
-    centre_id: UUID
-
-
-class CallNextRequest(BaseModel):
-    centre_id: UUID
 
 
 class QueueEntryResponse(BaseModel):
