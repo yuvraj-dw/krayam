@@ -9,6 +9,7 @@ from app.database import engine
 from app.exceptions import register_exception_handlers
 from app.routers.sms.webhook import router as sms_router
 from app.routers.v1.router import api_v1_router
+from app.services.bus import bus
 
 settings = get_settings()
 
@@ -16,6 +17,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
+    await bus.close()
     await engine.dispose()
 
 
