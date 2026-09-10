@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     SMS_GATE_API_URL: str = "https://api.sms-gate.app/3rdparty/v1"
     SMS_GATE_USERNAME: str = ""
     SMS_GATE_PASSWORD: str = ""
+    SMS_NOTIFICATIONS_ENABLED: bool = True
 
     # Auth
     JWT_SECRET_KEY: str = "change-me"
