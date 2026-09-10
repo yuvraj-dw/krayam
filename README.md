@@ -34,6 +34,7 @@ process payments.
   only when no conversation is in progress and is read-only — all validation
   and writes go through the normal services.
 - **Automated SMS notifications** — off-channel lifecycle events (booking confirmed, cancelled, rescheduled, procurement accepted, payment initiated & confirmed) are pushed to a farmer's phone via SMS.
+- **Realtime updates + offline centre sync.** Operators log in with phone + password; every mutation is written to a unified event log that streams to live clients over SSE and lets a centre's PWA operate offline and sync later — same log, same order, no polling.
 - **Operator analytics + load forecast.** History aggregates (served farmers, procured quantity, wait/processing times, peak hours, no-shows, cancellations, payments) and a deterministic per-centre load forecast with high-load warnings — `GET /api/v1/analytics/summary` and `GET /api/v1/analytics/forecast`.
 - **Conversational state machine.** SMS flows advance step by step
   (register → book → centre → slot → confirm) with session deduplication and a
@@ -59,7 +60,7 @@ Two entry points, one business layer.
   PostgreSQL (Supabase) — auth, SMS sessions/audit, queues, procurements, payments
 ```
 
-> **AI scope:** The *only* AI in Krayam is the Gemini natural-language parser in the SMS channel. Centre ranking, wait-time ETA, payment-anomaly flags, operator analytics, and load forecasts are all deterministic, rule-based logic — there is no ML behind them.
+> **AI scope:** The *only* AI in Krayam is the Gemini natural-language parser in the SMS channel. Centre ranking, wait-time ETA, payment-anomaly flags, operator analytics, load forecasts, realtime pushes, and offline sync are all deterministic, rule-based logic — there is no ML behind them.
 
 ## Tech stack
 
@@ -122,6 +123,9 @@ knows whether to complete the profile via `/auth/register`.
 | Slots | `POST /slots` · `GET /slots?centre_id=&on_date=` |
 | Bookings | `POST /bookings` · `GET /bookings` · `POST /bookings/recommend` · `GET /bookings/{id}` · `POST /bookings/{id}/cancel` · `POST /bookings/{id}/reschedule` |
 | Operator | `POST /operator/check-in` · `POST /operator/call-next` · `GET /operator/queue/{centre_id}` · queue start/complete/no-show · `POST /operator/procurements` · procurement payment + review · `POST /operator/payments/{id}/verify` · `GET /operator/events/{type}/{id}` |
+| Operator auth | `POST /operator/login` · `POST /operator/register` |
+| Realtime | `GET /events/stream?centre_id=` (operator SSE) · `GET /events/me` (farmer SSE) |
+| Offline sync | `GET /sync/{centre_id}/snapshot` · `GET /sync/{centre_id}/events?cursor=` · `POST /sync/{centre_id}/events` |
 | Analytics | `GET /analytics/summary?centre_id=&from=&to=` · `GET /analytics/forecast?centre_id=&date=` |
 | SMS | `POST /sms/incoming` (SMS Gate webhook) |
 
@@ -154,8 +158,7 @@ Errors always use `{ "error": { "code", "message" } }` with codes like
 
 ## Notes
 
-- Operator endpoints are currently unauthenticated (prototype decision; role
-  system planned).
+- Operator endpoints require JWT authentication and are scoped to the operator's assigned centre.
 - `DELETE /centres/{id}` and farmer deactivation are soft deletes.
 - Phone numbers are stored in E.164 (`+91...`).
 
