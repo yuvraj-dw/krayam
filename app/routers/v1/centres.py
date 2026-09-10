@@ -21,7 +21,8 @@ router = APIRouter(prefix="/centres", tags=["centres"])
 
 @router.post("", response_model=CentreResponse, status_code=201)
 async def create_centre(body: CentreCreate, db: AsyncSession = Depends(get_db)) -> Centre:
-    return CentreResponse.model_validate(await centre_service.create(db, body))
+    created = await centre_service.create(db, body)
+    return CentreResponse.model_validate(await centre_service.get_by_id(db, created.id))
 
 
 @router.get("", response_model=list[CentreResponse])
@@ -42,7 +43,8 @@ async def update_centre(
     centre_id: uuid.UUID, body: CentreUpdate, db: AsyncSession = Depends(get_db)
 ) -> Centre:
     centre = await centre_service.get_by_id(db, centre_id)
-    return CentreResponse.model_validate(await centre_service.update(db, centre, body))
+    await centre_service.update(db, centre, body)
+    return CentreResponse.model_validate(await centre_service.get_by_id(db, centre_id))
 
 
 @router.post("/{centre_id}/crops", response_model=CentreCropResponse, status_code=201)
