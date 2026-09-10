@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_farmer
+from app.dependencies import get_pending_phone
 from app.exceptions import ValidationError
 from app.models.farmer import Farmer, OTPPurpose
 from app.schemas.auth import OTPSendRequest, OTPVerifyRequest, TokenResponse
@@ -61,9 +61,9 @@ async def verify_otp(body: OTPVerifyRequest, db: AsyncSession = Depends(get_db))
 @router.post("/register", response_model=FarmerResponse)
 async def register_farmer(
     body: FarmerRegisterRequest,
-    farmer: Farmer = Depends(get_current_farmer),
+    pending_phone: str = Depends(get_pending_phone),
     db: AsyncSession = Depends(get_db),
 ) -> FarmerResponse:
     """Register farmer profile after OTP verification."""
-    registered = await farmer_service.register(db, farmer.phone, body)
+    registered = await farmer_service.register(db, pending_phone, body)
     return FarmerResponse.model_validate(registered)

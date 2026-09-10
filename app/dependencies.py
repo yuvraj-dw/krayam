@@ -31,3 +31,24 @@ async def get_current_farmer(
     if farmer is None or not farmer.is_active:
         raise AuthenticationError("Farmer not found or inactive")
     return farmer
+
+
+async def get_pending_phone(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> str:
+    """Resolve the phone number from a pending-registration token.
+
+    auth.verify_otp issues a ``pending:<phone>`` subject when no farmer
+    profile exists yet, telling the client to call /auth/register. That
+    endpoint depends on this rather than get_current_farmer, which expects a
+    real farmer UUID in the token subject.
+    """
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        sub = payload.get("sub")
+    except JWTError as e:
+        raise AuthenticationError(f"Invalid token: {e}") from e
+    if not isinstance(sub, str) or not sub.startswith("pending:"):
+        raise AuthenticationError("Registration requires a pending-verification token")
+    return sub.split(":", 1)[1]
