@@ -48,7 +48,7 @@ class BookingService:
             quantity=quantity,
             unit=unit,
             expected_date=expected_date,
-            status=BookingStatus.PENDING,
+            status=BookingStatus.CONFIRMED,
         )
         db.add(booking)
         await db.flush()
