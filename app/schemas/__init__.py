@@ -16,6 +16,7 @@ from app.schemas.procurement import (
     SlotCreate,
     SlotResponse,
 )
+from app.schemas.qr import QRCodeResponse, QRScanCheckInRequest, QRTheme
 
 __all__ = [
     "ErrorResponse",
@@ -41,4 +42,7 @@ __all__ = [
     "RecommendedCentre",
     "NotificationItem",
     "NotificationListResponse",
+    "QRTheme",
+    "QRCodeResponse",
+    "QRScanCheckInRequest",
 ]
