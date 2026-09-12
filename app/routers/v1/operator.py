@@ -1,20 +1,24 @@
 import hmac
 import uuid
+from datetime import date as date_type
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_operator, require_same_centre
 from app.exceptions import AuthorizationError, ValidationError
-from app.models.booking import Booking
+from app.models.booking import Booking, BookingStatus
 from app.models.operator import Operator
 from app.models.payment import PaymentStatus
 from app.models.queue import QueueEntry
 from app.schemas.operations import (
     CheckInRequest,
     EventResponse,
+    OperatorBookingListResponse,
+    OperatorDashboardResponse,
+    OperatorPaymentListResponse,
     PaymentResponse,
     PaymentReviewRequest,
     ProcurementRecordRequest,
@@ -270,3 +274,79 @@ async def entity_events(
         raise ValidationError(f"Unsupported entity type: {entity_type}")
     events = await event_service.list_for_entity(db, entity_type, entity_id)
     return [EventResponse.model_validate(e) for e in events]
+
+
+@router.get("/bookings", response_model=OperatorBookingListResponse)
+async def list_operator_bookings(
+    search: str | None = Query(
+        default=None, description="Search farmer name/phone/ID or booking ID"
+    ),
+    date: date_type | None = Query(
+        default=None, alias="date", description="Filter by expected date"
+    ),
+    crop: str | None = Query(default=None),
+    status: BookingStatus | None = Query(default=None),
+    slot_id: uuid.UUID | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    operator: Operator = Depends(get_current_operator),
+    db: AsyncSession = Depends(get_db),
+) -> OperatorBookingListResponse:
+    items, total = await booking_service.search_for_centre(
+        db,
+        operator.centre_id,
+        search=search,
+        on_date=date,
+        crop=crop,
+        status=status,
+        slot_id=slot_id,
+        limit=limit,
+        offset=offset,
+    )
+    return OperatorBookingListResponse(
+        items=items,  # type: ignore[arg-type]
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/dashboard", response_model=OperatorDashboardResponse)
+async def get_operator_dashboard(
+    operator: Operator = Depends(get_current_operator),
+    db: AsyncSession = Depends(get_db),
+) -> OperatorDashboardResponse:
+    data = await operator_service.get_dashboard_summary(db, operator.centre_id)
+    return OperatorDashboardResponse(**data)
+
+
+@router.get("/payments", response_model=OperatorPaymentListResponse)
+async def list_operator_payments(
+    status: PaymentStatus | None = Query(default=None),
+    has_anomaly: bool | None = Query(default=None),
+    from_date: date_type | None = Query(default=None),
+    to_date: date_type | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    operator: Operator = Depends(get_current_operator),
+    db: AsyncSession = Depends(get_db),
+) -> OperatorPaymentListResponse:
+    if from_date and to_date and from_date > to_date:
+        raise ValidationError("from_date must be before or equal to to_date")
+    items, total = await payment_service.list_for_centre(
+        db,
+        operator.centre_id,
+        status=status,
+        has_anomaly=has_anomaly,
+        from_date=from_date,
+        to_date=to_date,
+        limit=limit,
+        offset=offset,
+    )
+    return OperatorPaymentListResponse(
+        items=items,  # type: ignore[arg-type]
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
