@@ -474,6 +474,72 @@ class TestOperator(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(resp_invalid_date.status_code, 422)
 
+    async def test_operator_analytics(self) -> None:
+        """Test GET /api/v1/operator/analytics schema, date filters, and multi-tenant isolation."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Unauthenticated request -> 401/403
+            resp_no_auth = await client.get("/api/v1/operator/analytics")
+            self.assertIn(resp_no_auth.status_code, [401, 403])
+
+            # Farmer token -> 401/403
+            farmer_token = auth_service.create_access_token(self.farmer_id, role="farmer")
+            resp_farmer = await client.get(
+                "/api/v1/operator/analytics",
+                headers={"Authorization": f"Bearer {farmer_token}"},
+            )
+            self.assertIn(resp_farmer.status_code, [401, 403])
+
+            # Operator token with no query params -> 200 OK, default today
+            resp_default = await client.get("/api/v1/operator/analytics", headers=self.headers_a)
+            self.assertEqual(resp_default.status_code, 200)
+            data_default = resp_default.json()
+            self.assertEqual(str(data_default["centre_id"]), self.centre_a_id)
+            today_str = str(date.today())
+            self.assertEqual(data_default["from_date"], today_str)
+            self.assertEqual(data_default["to_date"], today_str)
+            self.assertIn("farmers_served", data_default)
+            self.assertIn("total_quantity_procured", data_default)
+            self.assertIn("pending_payments_count", data_default)
+            self.assertIn("completed_payments_count", data_default)
+
+            # Operator token with valid date range
+            resp_range = await client.get(
+                "/api/v1/operator/analytics?from=2026-09-01&to=2026-09-12",
+                headers=self.headers_a,
+            )
+            self.assertEqual(resp_range.status_code, 200)
+            data_range = resp_range.json()
+            self.assertEqual(data_range["from_date"], "2026-09-01")
+            self.assertEqual(data_range["to_date"], "2026-09-12")
+
+            # Operator token with invalid date range -> 422
+            resp_invalid = await client.get(
+                "/api/v1/operator/analytics?from=2026-09-15&to=2026-09-10",
+                headers=self.headers_a,
+            )
+            self.assertEqual(resp_invalid.status_code, 422)
+
+            # Multi-tenant isolation check: Centre B operator token returns centre_id == self.centre_b_id
+            async with async_session_factory() as db:
+                op_b_phone = f"+9195{uuid.uuid4().int % 10**8:08d}"
+                op_b = await operator_service.register(
+                    db,
+                    name="Op B",
+                    phone=op_b_phone,
+                    password="Password@123",
+                    centre_id=uuid.UUID(self.centre_b_id),
+                )
+                await db.commit()
+            token_b = operator_service.token_for(op_b)
+            headers_b = {"Authorization": f"Bearer {token_b}"}
+
+            resp_b = await client.get("/api/v1/operator/analytics", headers=headers_b)
+            self.assertEqual(resp_b.status_code, 200)
+            data_b = resp_b.json()
+            self.assertEqual(str(data_b["centre_id"]), self.centre_b_id)
+
 
 if __name__ == "__main__":
     unittest.main()
