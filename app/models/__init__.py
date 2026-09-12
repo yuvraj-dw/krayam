@@ -3,6 +3,7 @@ from app.models.booking import VALID_TRANSITIONS, Booking, BookingStatus
 from app.models.centre import Centre, CentreCrop
 from app.models.event import Event
 from app.models.farmer import OTP, Farmer, OTPPurpose
+from app.models.notification import Notification
 from app.models.payment import Payment, PaymentStatus
 from app.models.procurement import Procurement
 from app.models.queue import QueueEntry, QueueStatus
@@ -27,5 +28,6 @@ __all__ = [
     "PaymentStatus",
     "SMSSession",
     "SMSMessage",
+    "Notification",
     "Event",
 ]
