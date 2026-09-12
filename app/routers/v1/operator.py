@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import get_db
 from app.dependencies import get_current_operator, require_same_centre
-from app.exceptions import AuthorizationError, ValidationError
+from app.exceptions import AuthorizationError, ForbiddenError, NotFoundError, ValidationError
 from app.models.booking import Booking, BookingStatus
 from app.models.operator import Operator
 from app.models.payment import PaymentStatus
@@ -33,6 +33,7 @@ from app.schemas.operator import (
     OperatorResponse,
     OperatorTokenResponse,
 )
+from app.schemas.qr import QRCodeResponse, QRScanCheckInRequest
 from app.services.analytics import analytics_service
 from app.services.booking import booking_service
 from app.services.event import event_service
@@ -42,6 +43,7 @@ from app.services.operator import operator_service
 from app.services.outbox import outbox_service
 from app.services.payment import payment_service
 from app.services.procurement import procurement_service
+from app.services.qr import qr_service
 from app.services.queue import queue_service
 
 router = APIRouter(prefix="/operator", tags=["operator"])
@@ -108,6 +110,48 @@ async def check_in_farmer(
     entry = await queue_service.check_in(
         db, booking_id=body.booking_id, centre_id=operator.centre_id
     )
+    await outbox_service.publish_after(db, centre_id=operator.centre_id, after=before)
+    return QueueEntryResponse.model_validate(entry)
+
+
+@router.post("/check-in/scan", response_model=QueueEntryResponse)
+async def check_in_scan(
+    body: QRScanCheckInRequest,
+    db: AsyncSession = Depends(get_db),
+    operator: Operator = Depends(get_current_operator),
+) -> QueueEntryResponse:
+    payload = qr_service.verify_and_decode_qr(body.qr_payload)
+    if payload.get("type") != "GATE_PASS":
+        raise ValidationError("Invalid gate pass QR")
+
+    centre_id_raw = payload.get("centre_id")
+    if not centre_id_raw:
+        raise ValidationError("Gate pass QR missing centre information")
+    try:
+        qr_centre_id = uuid.UUID(str(centre_id_raw))
+    except (ValueError, TypeError) as e:
+        raise ValidationError("Invalid centre ID in QR pass") from e
+
+    if qr_centre_id != operator.centre_id:
+        raise ForbiddenError("Booking is not for your centre")
+
+    booking_id_raw = payload.get("booking_id")
+    if not booking_id_raw:
+        raise ValidationError("Missing booking ID in QR pass")
+
+    # Try UUID lookup first, fallback to human-readable booking code (e.g. BK-XXXX)
+    booking = None
+    try:
+        booking_uuid = uuid.UUID(str(booking_id_raw))
+        booking = await booking_service.get_by_id(db, booking_uuid)
+    except (ValueError, NotFoundError):
+        booking = await booking_service.get_by_code(db, str(booking_id_raw))
+
+    if not booking:
+        raise NotFoundError("Booking not found")
+
+    before = await outbox_service.max_id(db)
+    entry = await queue_service.check_in(db, booking_id=booking.id, centre_id=operator.centre_id)
     await outbox_service.publish_after(db, centre_id=operator.centre_id, after=before)
     return QueueEntryResponse.model_validate(entry)
 
@@ -199,6 +243,34 @@ async def record_procurement(
     await notification_service.notify_procurement_completed(db, procurement, booking, farmer)
     await outbox_service.publish_after(db, centre_id=operator.centre_id, after=before)
     return ProcurementResponse.model_validate(procurement)
+
+
+@router.get("/procurements/{id}/qr", response_model=QRCodeResponse)
+async def get_procurement_qr(
+    id: uuid.UUID,  # noqa: A002
+    db: AsyncSession = Depends(get_db),
+    operator: Operator = Depends(get_current_operator),
+) -> QRCodeResponse:
+    procurement = await procurement_service.get_by_id(db, id)
+    if not procurement:
+        raise NotFoundError("Procurement not found")
+
+    booking = await booking_service.get_by_id(db, procurement.booking_id)
+    if not booking:
+        raise NotFoundError("Booking not found")
+
+    if booking.centre_id != operator.centre_id:
+        raise ForbiddenError("Booking is not in your centre")
+
+    farmer = await farmer_service.get_by_id(db, booking.farmer_id)
+    payment = await payment_service.get_by_procurement_id(db, procurement.id)
+
+    return qr_service.generate_procurement_receipt_qr(
+        procurement=procurement,
+        booking=booking,
+        farmer=farmer,
+        payment=payment,
+    )
 
 
 @router.post("/procurements/{procurement_id}/payment", response_model=PaymentResponse)

@@ -115,7 +115,8 @@ class NotificationService:
         text = (
             f"Krayam: Booking {booking.booking_id} {_fmt_qty(booking.quantity)} "
             f"{booking.unit} {booking.crop} for {format_date(booking.expected_date)}"
-            f"{at_centre} is confirmed. Send STATUS for updates."
+            f"{at_centre} is confirmed. Gate pass: https://krayam.in/p/{booking.booking_id}. "
+            f"Send STATUS for updates."
         )
         await _record_notification(
             db,

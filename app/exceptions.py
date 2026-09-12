@@ -33,6 +33,11 @@ class AuthorizationError(AppError):
         super().__init__(code="FORBIDDEN", message=message, status_code=403)
 
 
+class ForbiddenError(AuthorizationError):
+    """Alias for AuthorizationError (HTTP 403 Forbidden)."""
+    pass
+
+
 class ConflictError(AppError):
     def __init__(self, message: str = "Resource already exists"):
         super().__init__(code="CONFLICT", message=message, status_code=409)

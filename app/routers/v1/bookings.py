@@ -5,18 +5,22 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.dependencies import get_current_farmer
-from app.exceptions import AuthorizationError
+from app.dependencies import get_current_farmer, get_current_user_token
+from app.exceptions import AuthorizationError, ForbiddenError, NotFoundError
 from app.models.farmer import Farmer
+from app.schemas.auth import TokenData
 from app.schemas.procurement import (
     BookingCreate,
     BookingReschedule,
     BookingResponse,
     RecommendedCentre,
 )
+from app.schemas.qr import QRCodeResponse
 from app.services.booking import booking_service
+from app.services.farmer import farmer_service
 from app.services.notification import notification_service
 from app.services.outbox import outbox_service
+from app.services.qr import qr_service
 from app.services.recommendation import recommendation_service
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
@@ -131,3 +135,26 @@ async def reschedule_booking(
             db, centre_id=rescheduled.centre_id, after=before
         )
     return BookingResponse.model_validate(rescheduled)
+
+
+@router.get("/{id}/qr", response_model=QRCodeResponse)
+async def get_booking_qr(
+    id: uuid.UUID,  # noqa: A002
+    db: AsyncSession = Depends(get_db),
+    user: TokenData = Depends(get_current_user_token),
+) -> QRCodeResponse:
+    booking = await booking_service.get_by_id(db, id)
+    if not booking:
+        raise NotFoundError("Booking not found")
+
+    if user.role == "farmer":
+        if booking.farmer_id != user.user_id:
+            raise ForbiddenError("Access denied")
+    elif user.role == "operator":
+        if booking.centre_id != user.centre_id:
+            raise ForbiddenError("Access denied")
+    else:
+        raise ForbiddenError("Access denied")
+
+    farmer = await farmer_service.get_by_id(db, booking.farmer_id)
+    return qr_service.generate_gate_pass_qr(booking, farmer)

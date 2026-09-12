@@ -11,9 +11,39 @@ from app.database import get_db
 from app.exceptions import AuthenticationError, AuthorizationError
 from app.models.farmer import Farmer
 from app.models.operator import Operator
+from app.schemas.auth import TokenData
 
 settings = get_settings()
 security = HTTPBearer()
+
+
+async def get_current_user_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> TokenData:
+    """Decodes JWT and returns user_id, role, and optional centre_id.
+    Accepts valid farmer or operator tokens.
+    """
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+        role = payload.get("role")
+        if role not in ("farmer", "operator"):
+            raise AuthenticationError("Invalid role in token")
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            raise AuthenticationError("Invalid token subject")
+        user_id = UUID(str(user_id_str))
+
+        centre_id = None
+        if role == "operator":
+            centre_id_raw = payload.get("centre_id")
+            if not centre_id_raw:
+                raise AuthenticationError("Invalid operator token: missing centre_id")
+            centre_id = UUID(str(centre_id_raw))
+
+        return TokenData(user_id=user_id, role=role, centre_id=centre_id)
+    except (JWTError, ValueError, TypeError) as e:
+        raise AuthenticationError("Invalid token") from e
 
 
 async def get_current_farmer(

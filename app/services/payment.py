@@ -287,5 +287,14 @@ class PaymentService:
             )
         return items, total
 
+    async def get_by_procurement_id(
+        self, db: AsyncSession, procurement_id: uuid.UUID
+    ) -> Payment | None:
+        """Fetch the payment associated with a procurement if one exists."""
+        result = await db.execute(
+            select(Payment).where(Payment.procurement_id == procurement_id)
+        )
+        return result.scalar_one_or_none()
+
 
 payment_service = PaymentService()
