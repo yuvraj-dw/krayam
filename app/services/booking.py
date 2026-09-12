@@ -2,11 +2,12 @@ import contextlib
 import uuid
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import NotFoundError, ValidationError
 from app.models.booking import VALID_TRANSITIONS, Booking, BookingStatus
+from app.models.farmer import Farmer
 from app.schemas.procurement import BookingReschedule
 from app.services.outbox import outbox_service
 from app.services.slot import slot_service
@@ -202,6 +203,79 @@ class BookingService:
             client_event_id=client_event_id,
         )
         return booking
+
+    async def search_for_centre(
+        self,
+        db: AsyncSession,
+        centre_id: uuid.UUID,
+        *,
+        search: str | None = None,
+        on_date: date | None = None,
+        crop: str | None = None,
+        status: BookingStatus | None = None,
+        slot_id: uuid.UUID | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        query = (
+            select(
+                Booking,
+                Farmer.name.label("farmer_name"),
+                Farmer.phone.label("farmer_phone"),
+                Farmer.farmer_id.label("farmer_code"),
+            )
+            .join(Farmer, Booking.farmer_id == Farmer.id)
+            .where(Booking.centre_id == centre_id)
+        )
+        if search:
+            pattern = f"%{search.strip()}%"
+            query = query.where(
+                or_(
+                    Farmer.name.ilike(pattern),
+                    Farmer.phone.ilike(pattern),
+                    Farmer.farmer_id.ilike(pattern),
+                    Booking.booking_id.ilike(pattern),
+                )
+            )
+        if on_date:
+            query = query.where(Booking.expected_date == on_date)
+        if crop:
+            query = query.where(Booking.crop.ilike(crop.strip()))
+        if status:
+            query = query.where(Booking.status == status)
+        if slot_id:
+            query = query.where(Booking.slot_id == slot_id)
+
+        count_query = select(func.count()).select_from(query.subquery())
+        total = int((await db.scalar(count_query)) or 0)
+
+        rows = (
+            await db.execute(
+                query.order_by(Booking.created_at.desc()).limit(limit).offset(offset)
+            )
+        ).all()
+
+        items = []
+        for b, f_name, f_phone, f_code in rows:
+            items.append(
+                {
+                    "id": b.id,
+                    "booking_id": b.booking_id,
+                    "farmer_id": b.farmer_id,
+                    "farmer_name": f_name,
+                    "farmer_phone": f_phone,
+                    "farmer_code": f_code or "",
+                    "centre_id": b.centre_id,
+                    "slot_id": b.slot_id,
+                    "crop": b.crop,
+                    "quantity": float(b.quantity),
+                    "unit": b.unit,
+                    "expected_date": b.expected_date,
+                    "status": b.status,
+                    "created_at": b.created_at,
+                }
+            )
+        return items, total
 
 
 booking_service = BookingService()

@@ -1,11 +1,13 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, time, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import ConflictError, NotFoundError, ValidationError
+from app.models.booking import Booking
 from app.models.centre import CentreCrop
+from app.models.farmer import Farmer
 from app.models.payment import Payment, PaymentStatus
 from app.models.procurement import Procurement
 from app.services.anomaly import anomaly_detector
@@ -210,6 +212,80 @@ class PaymentService:
             "status": payment.status.value if payment else None,
             "anomaly_flags": flags,
         }
+
+    async def list_for_centre(
+        self,
+        db: AsyncSession,
+        centre_id: uuid.UUID,
+        *,
+        status: PaymentStatus | None = None,
+        has_anomaly: bool | None = None,
+        from_date: date | None = None,
+        to_date: date | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        query = (
+            select(
+                Payment,
+                Procurement.booking_id.label("booking_id"),
+                Farmer.name.label("farmer_name"),
+                Farmer.phone.label("farmer_phone"),
+            )
+            .join(Procurement, Payment.procurement_id == Procurement.id)
+            .join(Booking, Procurement.booking_id == Booking.id)
+            .join(Farmer, Payment.farmer_id == Farmer.id)
+            .where(Booking.centre_id == centre_id)
+        )
+        if status:
+            query = query.where(Payment.status == status)
+        if from_date:
+            dt_from = datetime.combine(from_date, time.min, tzinfo=timezone.utc)
+            query = query.where(Payment.created_at >= dt_from)
+        if to_date:
+            dt_to = datetime.combine(to_date, time.max, tzinfo=timezone.utc)
+            query = query.where(Payment.created_at <= dt_to)
+
+        count_query = select(func.count()).select_from(query.subquery())
+        total = int((await db.scalar(count_query)) or 0)
+
+        rows = (
+            await db.execute(
+                query.order_by(Payment.created_at.desc()).limit(limit).offset(offset)
+            )
+        ).all()
+
+        items = []
+        for pmt, bid, f_name, f_phone in rows:
+            booking = await booking_service.get_by_id(db, bid)
+            flags = anomaly_detector.check_payment(
+                booking=booking,
+                actual_quantity=float(pmt.quantity),
+                amount=float(pmt.amount),
+            )
+            if has_anomaly is not None:
+                if has_anomaly and not flags:
+                    continue
+                if not has_anomaly and flags:
+                    continue
+            items.append(
+                {
+                    "id": pmt.id,
+                    "payment_id": pmt.payment_id,
+                    "procurement_id": pmt.procurement_id,
+                    "booking_id": bid,
+                    "farmer_id": pmt.farmer_id,
+                    "farmer_name": f_name,
+                    "farmer_phone": f_phone,
+                    "quantity": float(pmt.quantity),
+                    "rate": float(pmt.rate),
+                    "amount": float(pmt.amount),
+                    "status": pmt.status,
+                    "anomaly_flags": flags,
+                    "created_at": pmt.created_at,
+                }
+            )
+        return items, total
 
 
 payment_service = PaymentService()
