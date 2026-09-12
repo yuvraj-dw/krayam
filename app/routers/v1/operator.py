@@ -13,6 +13,7 @@ from app.models.booking import Booking, BookingStatus
 from app.models.operator import Operator
 from app.models.payment import PaymentStatus
 from app.models.queue import QueueEntry
+from app.schemas.analytics import AnalyticsSummary
 from app.schemas.operations import (
     CheckInRequest,
     EventResponse,
@@ -32,6 +33,7 @@ from app.schemas.operator import (
     OperatorResponse,
     OperatorTokenResponse,
 )
+from app.services.analytics import analytics_service
 from app.services.booking import booking_service
 from app.services.event import event_service
 from app.services.farmer import farmer_service
@@ -350,3 +352,21 @@ async def list_operator_payments(
         offset=offset,
     )
 
+
+@router.get("/analytics", response_model=AnalyticsSummary)
+async def get_operator_analytics(
+    from_date: date_type | None = Query(default=None, alias="from", description="Start date (defaults to today)"),
+    to_date: date_type | None = Query(default=None, alias="to", description="End date (defaults to today)"),
+    db: AsyncSession = Depends(get_db),
+    operator: Operator = Depends(get_current_operator),
+) -> AnalyticsSummary:
+    today = date_type.today()
+    start_date = from_date or today
+    end_date = to_date or today
+
+    if start_date > end_date:
+        raise ValidationError("from must be on or before to")
+
+    return await analytics_service.summary(
+        db, centre_id=operator.centre_id, from_date=start_date, to_date=end_date
+    )
