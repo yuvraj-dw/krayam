@@ -2,6 +2,7 @@ from app.schemas.auth import OTPSendRequest, OTPVerifyRequest, TokenResponse
 from app.schemas.common import ErrorDetail, ErrorResponse, SuccessResponse
 from app.schemas.farmer import FarmerRegisterRequest, FarmerResponse, FarmerUpdateRequest
 from app.schemas.location import ResolvedLocation
+from app.schemas.notification import NotificationItem, NotificationListResponse
 from app.schemas.procurement import (
     BookingCreate,
     BookingReschedule,
@@ -38,4 +39,6 @@ __all__ = [
     "BookingReschedule",
     "BookingResponse",
     "RecommendedCentre",
+    "NotificationItem",
+    "NotificationListResponse",
 ]
