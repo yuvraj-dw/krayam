@@ -1,6 +1,12 @@
+import logging
+import os
+import sys
 import unittest
 import uuid
 from datetime import date, timedelta
+
+# Ensure repo root is on sys.path for direct script execution
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import httpx
 from sqlalchemy import text
@@ -8,7 +14,12 @@ from sqlalchemy import text
 from app.config import get_settings
 from app.database import async_session_factory, engine
 from app.main import app
+from app.services.auth import auth_service
 from app.services.operator import operator_service
+
+# Reduce database query log verbosity during test runs
+engine.echo = False
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
 
 settings = get_settings()
 
@@ -271,6 +282,197 @@ class TestOperator(unittest.IsolatedAsyncioTestCase):
                 f"/api/v1/operator/events/unknown_type/{proc_b_id}", headers=self.headers_a
             )
             self.assertEqual(resp_unsupported.status_code, 422)
+
+    async def test_operator_bookings_search_and_filter(self) -> None:
+        """Test GET /api/v1/operator/bookings with auth checks and query filters."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Unauthenticated request -> 401/403
+            resp_no_auth = await client.get("/api/v1/operator/bookings")
+            self.assertIn(resp_no_auth.status_code, [401, 403])
+
+            # Farmer token -> 401/403
+            farmer_token = auth_service.create_access_token(self.farmer_id, role="farmer")
+            resp_farmer = await client.get(
+                "/api/v1/operator/bookings",
+                headers={"Authorization": f"Bearer {farmer_token}"},
+            )
+            self.assertIn(resp_farmer.status_code, [401, 403])
+
+            # Valid operator token for Centre A
+            resp = await client.get("/api/v1/operator/bookings", headers=self.headers_a)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertIn("items", data)
+            self.assertIn("total", data)
+            self.assertGreaterEqual(data["total"], 1)
+
+            # Assert only centre_a bookings are returned
+            item_bids = [item["booking_id"] for item in data["items"]]
+            self.assertIn(f"BKA-{self.test_prefix}", item_bids)
+            self.assertNotIn(f"BKB-{self.test_prefix}", item_bids)
+
+            # Query filter: search by booking code
+            resp_search = await client.get(
+                f"/api/v1/operator/bookings?search=BKA-{self.test_prefix}",
+                headers=self.headers_a,
+            )
+            self.assertEqual(resp_search.status_code, 200)
+            search_data = resp_search.json()
+            self.assertEqual(search_data["total"], 1)
+            self.assertEqual(search_data["items"][0]["booking_id"], f"BKA-{self.test_prefix}")
+
+            # Query filter: crop
+            resp_crop = await client.get(
+                "/api/v1/operator/bookings?crop=wheat", headers=self.headers_a
+            )
+            self.assertEqual(resp_crop.status_code, 200)
+            self.assertGreaterEqual(resp_crop.json()["total"], 1)
+
+            resp_no_crop = await client.get(
+                "/api/v1/operator/bookings?crop=nonexistentcrop", headers=self.headers_a
+            )
+            self.assertEqual(resp_no_crop.status_code, 200)
+            self.assertEqual(resp_no_crop.json()["total"], 0)
+
+            # Query filter: status
+            resp_status = await client.get(
+                "/api/v1/operator/bookings?status=confirmed", headers=self.headers_a
+            )
+            self.assertEqual(resp_status.status_code, 200)
+            self.assertGreaterEqual(resp_status.json()["total"], 1)
+
+    async def test_operator_dashboard(self) -> None:
+        """Test GET /api/v1/operator/dashboard schema keys and centre scope."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Unauthenticated request -> 401/403
+            resp_no_auth = await client.get("/api/v1/operator/dashboard")
+            self.assertIn(resp_no_auth.status_code, [401, 403])
+
+            # Farmer token -> 401/403
+            farmer_token = auth_service.create_access_token(self.farmer_id, role="farmer")
+            resp_farmer = await client.get(
+                "/api/v1/operator/dashboard",
+                headers={"Authorization": f"Bearer {farmer_token}"},
+            )
+            self.assertIn(resp_farmer.status_code, [401, 403])
+
+            # Valid operator token
+            resp = await client.get("/api/v1/operator/dashboard", headers=self.headers_a)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+
+            # Assert top-level keys match OperatorDashboardResponse schema
+            expected_keys = {
+                "centre_id",
+                "today",
+                "bookings_today_total",
+                "queue",
+                "procurement",
+                "payments",
+                "capacity",
+                "sync",
+            }
+            self.assertTrue(expected_keys.issubset(set(data.keys())))
+            self.assertEqual(str(data["centre_id"]), self.centre_a_id)
+
+            # Assert sub-schema keys
+            self.assertIn("waiting_count", data["queue"])
+            self.assertIn("called_count", data["queue"])
+            self.assertIn("processing_count", data["queue"])
+            self.assertIn("estimated_wait_minutes", data["queue"])
+
+            self.assertIn("completed_today_count", data["procurement"])
+            self.assertIn("total_tonnage_today", data["procurement"])
+
+            self.assertIn("pending_count", data["payments"])
+            self.assertIn("pending_amount", data["payments"])
+            self.assertIn("flagged_count", data["payments"])
+
+            self.assertIn("daily_capacity", data["capacity"])
+            self.assertIn("utilization_percent", data["capacity"])
+
+            self.assertIn("max_outbox_id", data["sync"])
+
+    async def test_operator_payments(self) -> None:
+        """Test GET /api/v1/operator/payments listing, pagination, and multi-tenancy."""
+        # Insert a procurement and payment for Centre A
+        proc_a_id = str(uuid.uuid4())
+        pmt_a_id = str(uuid.uuid4())
+        async with async_session_factory() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO procurements (id, procurement_id, booking_id, accepted_quantity, unit, created_at) "
+                    "VALUES (:id, :pid, :bid, 10.0, 'quintal', now())"
+                ),
+                {"id": proc_a_id, "pid": f"PRA-{self.test_prefix}", "bid": self.booking_a_id},
+            )
+            await db.execute(
+                text(
+                    "INSERT INTO payments (id, payment_id, procurement_id, farmer_id, quantity, rate, amount, status, created_at) "
+                    "VALUES (:id, :pid, :prid, :fid, 10.0, 2500.0, 25000.0, 'initiated', now())"
+                ),
+                {
+                    "id": pmt_a_id,
+                    "pid": f"PMA-{self.test_prefix}",
+                    "prid": proc_a_id,
+                    "fid": self.farmer_id,
+                },
+            )
+            await db.commit()
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Unauthenticated request -> 401/403
+            resp_no_auth = await client.get("/api/v1/operator/payments")
+            self.assertIn(resp_no_auth.status_code, [401, 403])
+
+            # Farmer token -> 401/403
+            farmer_token = auth_service.create_access_token(self.farmer_id, role="farmer")
+            resp_farmer = await client.get(
+                "/api/v1/operator/payments",
+                headers={"Authorization": f"Bearer {farmer_token}"},
+            )
+            self.assertIn(resp_farmer.status_code, [401, 403])
+
+            # Valid operator token
+            resp = await client.get("/api/v1/operator/payments", headers=self.headers_a)
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+
+            # Assert response structure
+            self.assertIn("items", data)
+            self.assertIn("total", data)
+            self.assertIn("limit", data)
+            self.assertIn("offset", data)
+            self.assertEqual(data["total"], 1)
+            self.assertEqual(data["items"][0]["payment_id"], f"PMA-{self.test_prefix}")
+            self.assertEqual(data["items"][0]["farmer_name"], "Farmer Test")
+            self.assertEqual(data["items"][0]["amount"], 25000.0)
+
+            # Query filter: status
+            resp_status = await client.get(
+                "/api/v1/operator/payments?status=initiated", headers=self.headers_a
+            )
+            self.assertEqual(resp_status.status_code, 200)
+            self.assertEqual(resp_status.json()["total"], 1)
+
+            resp_status_none = await client.get(
+                "/api/v1/operator/payments?status=confirmed", headers=self.headers_a
+            )
+            self.assertEqual(resp_status_none.status_code, 200)
+            self.assertEqual(resp_status_none.json()["total"], 0)
+
+            # Date validation: from_date > to_date -> 422
+            resp_invalid_date = await client.get(
+                "/api/v1/operator/payments?from_date=2026-09-15&to_date=2026-09-10",
+                headers=self.headers_a,
+            )
+            self.assertEqual(resp_invalid_date.status_code, 422)
 
 
 if __name__ == "__main__":

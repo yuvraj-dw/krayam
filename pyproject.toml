@@ -32,6 +32,7 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "A", "SIM", "TCH"]
 ignore = [
+    "E501",   # Line length (handled pragmatically)
     "B008",   # FastAPI Depends() in function args (standard pattern)
     "UP042",  # str, enum.Enum (StrEnum requires Python 3.11+)
     "UP017",  # datetime.UTC (requires Python 3.11+)

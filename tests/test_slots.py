@@ -54,8 +54,6 @@ class TestSlots(unittest.IsolatedAsyncioTestCase):
             }
             resp = await client.post("/api/v1/slots", json=payload)
             self.assertEqual(resp.status_code, 201)
-            slot_id = resp.json()["id"]
-
             # Duplicate slot conflict
             resp_dup = await client.post("/api/v1/slots", json=payload)
             self.assertEqual(resp_dup.status_code, 409)

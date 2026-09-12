@@ -260,7 +260,7 @@ class PaymentService:
             booking = await booking_service.get_by_id(db, bid)
             flags = anomaly_detector.check_payment(
                 booking=booking,
-                actual_quantity=float(pmt.quantity),
+                accepted_quantity=float(pmt.quantity),
                 amount=float(pmt.amount),
             )
             if has_anomaly is not None:
