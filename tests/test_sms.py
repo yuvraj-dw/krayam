@@ -32,6 +32,12 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
 
         async with async_session_factory() as db:
             await db.execute(
+                text("DELETE FROM bookings WHERE farmer_id IN (SELECT id FROM farmers WHERE phone = :p)"),
+                {"p": self.phone},
+            )
+            await db.execute(text("DELETE FROM farmers WHERE phone = :p"), {"p": self.phone})
+            await db.commit()
+            await db.execute(
                 text(
                     "INSERT INTO centres (id, name, code, latitude, longitude, capacity, is_active, created_at) "
                     "VALUES (:id, :name, :code, 19.0, 74.0, 50, true, now())"
@@ -251,8 +257,12 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
 
             # 2. Unregistered farmer greeting
             # Test greeting for unregistered phone without sending outbound SMS
-            # Temporarily delete farmer record for self.phone so it behaves as unregistered
+            # Temporarily delete bookings and farmer record for self.phone so it behaves as unregistered
             async with async_session_factory() as db:
+                await db.execute(
+                    text("DELETE FROM bookings WHERE farmer_id IN (SELECT id FROM farmers WHERE phone = :p)"),
+                    {"p": self.phone},
+                )
                 await db.execute(text("DELETE FROM farmers WHERE phone = :p"), {"p": self.phone})
                 await db.commit()
             try:

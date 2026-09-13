@@ -559,6 +559,111 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(analytics_data["farmers_served"], 1)
             self.assertGreaterEqual(analytics_data["total_quantity_procured"], 19.5)
 
+            # -----------------------------------------------------------------
+            # Step 9: Walk-In Lifecycle Flow (New Requirement)
+            # -----------------------------------------------------------------
+            # 1. Operator searches for existing registered farmer
+            search_resp = await client.get(
+                f"/api/v1/operator/farmers/search?q={self.norm_phone}",
+                headers=self.operator_headers,
+            )
+            self.assertEqual(search_resp.status_code, 200)
+            matched_farmers = search_resp.json()
+            self.assertGreaterEqual(len(matched_farmers), 1)
+            self.assertEqual(matched_farmers[0]["id"], str(farmer_id))
+
+            # 2. Operator registers a walk-in farmer (creates or returns existing)
+            walkin_reg_resp = await client.post(
+                "/api/v1/operator/farmers",
+                headers=self.operator_headers,
+                json={
+                    "name": f"WalkIn {self.test_prefix}",
+                    "phone": self.phone,
+                    "village": "Nashik WalkIn",
+                    "district": "Nashik",
+                    "state": "Maharashtra",
+                    "pincode": "422001",
+                },
+            )
+            self.assertIn(walkin_reg_resp.status_code, [200, 201])
+            walkin_farmer = walkin_reg_resp.json()
+            walkin_farmer_id = walkin_farmer["id"]
+
+            # 3. Operator creates walk-in booking for this farmer
+            walkin_book_resp = await client.post(
+                "/api/v1/operator/walk-in-bookings",
+                headers=self.operator_headers,
+                json={
+                    "farmer_id": walkin_farmer_id,
+                    "crop": "Wheat",
+                    "quantity": 15.0,
+                    "unit": "quintal",
+                    "expected_date": str(date.today()),
+                },
+            )
+            self.assertEqual(walkin_book_resp.status_code, 201)
+            walkin_booking_data = walkin_book_resp.json()
+            self.assertTrue(walkin_booking_data["is_walk_in"])
+            self.assertEqual(walkin_booking_data["status"], "confirmed")
+            walkin_booking_id = walkin_booking_data["id"]
+
+            # 4. Walk-in booking proceeds through quality pricing validation & payment
+            walkin_checkin = await client.post(
+                "/api/v1/operator/check-in",
+                headers=self.operator_headers,
+                json={"booking_id": walkin_booking_id},
+            )
+            self.assertEqual(walkin_checkin.status_code, 200)
+            walkin_queue_entry_id = walkin_checkin.json()["id"]
+
+            # Start processing
+            await client.post(
+                f"/api/v1/operator/queue/{walkin_queue_entry_id}/call",
+                headers=self.operator_headers,
+            )
+
+            # Test invalid price rejection for walk-in crop (e.g. ₹999 below min ₹2000)
+            invalid_proc_resp = await client.post(
+                "/api/v1/operator/procurements",
+                headers=self.operator_headers,
+                json={
+                    "booking_id": walkin_booking_id,
+                    "accepted_quantity": 14.0,
+                    "unit_price": 999.0,
+                    "quality_grade": "Substandard",
+                },
+            )
+            self.assertEqual(invalid_proc_resp.status_code, 422)
+
+            # Valid price within bounds (₹2,500)
+            valid_proc_resp = await client.post(
+                "/api/v1/operator/procurements",
+                headers=self.operator_headers,
+                json={
+                    "booking_id": walkin_booking_id,
+                    "accepted_quantity": 14.0,
+                    "unit_price": 2500.0,
+                    "quality_grade": "Grade A",
+                },
+            )
+            self.assertEqual(valid_proc_resp.status_code, 201)
+            walkin_proc_id = valid_proc_resp.json()["id"]
+
+            # Complete queue processing
+            await client.post(
+                f"/api/v1/operator/queue/{walkin_queue_entry_id}/complete",
+                headers=self.operator_headers,
+            )
+
+            # Payment calculated: 14.0 * 2500.0 = 35000.0
+            walkin_pmt_resp = await client.post(
+                f"/api/v1/operator/procurements/{walkin_proc_id}/payment",
+                headers=self.operator_headers,
+            )
+            self.assertEqual(walkin_pmt_resp.status_code, 200)
+            self.assertEqual(walkin_pmt_resp.json()["rate"], 2500.0)
+            self.assertEqual(walkin_pmt_resp.json()["amount"], 35000.0)
+
     async def test_e2e_sms_lifecycle_and_natural_language(self) -> None:
         # Register test farmer in database with self.phone
         farmer_id = uuid.uuid4()
@@ -805,6 +910,95 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             _, sent_history_reply = self.mock_send_sms.call_args[0]
             self.assertIn(booking_ref, sent_history_reply)
             self.assertIn("Wheat", sent_history_reply)
+
+            # -----------------------------------------------------------------
+            # Step 7: Global Conversation Control (HELP, CANCEL, HI Greetings)
+            # -----------------------------------------------------------------
+            # 1. Test HI greeting for registered farmer
+            hi_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "HI",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_hi = await client.post("/sms/incoming", json=hi_payload)
+            self.assertEqual(resp_hi.status_code, 200)
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_hi_reply = self.mock_send_sms.call_args[0]
+            self.assertIn("Namaste", sent_hi_reply)
+            self.assertIn("- BOOK:", sent_hi_reply)
+            self.assertIn("- STATUS:", sent_hi_reply)
+            self.assertIn("- HELP:", sent_hi_reply)
+
+            # 2. Start booking flow and test mid-flow HELP (must preserve session)
+            book_start_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "BOOK",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            await client.post("/sms/incoming", json=book_start_payload)
+            self.mock_send_sms.assert_awaited_once()
+
+            # Farmer is in bk_crop state. Now send HELP.
+            help_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "HELP",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_help = await client.post("/sms/incoming", json=help_payload)
+            self.assertEqual(resp_help.status_code, 200)
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_help_reply = self.mock_send_sms.call_args[0]
+            self.assertIn("Available commands:", sent_help_reply)
+            self.assertIn("REGISTER", sent_help_reply)
+
+            # Verify session state is preserved (still in bk_crop)
+            async with async_session_factory() as db:
+                sess_row = (
+                    await db.execute(
+                        text("SELECT state FROM sms_sessions WHERE phone = :p"),
+                        {"p": self.norm_phone},
+                    )
+                ).first()
+                self.assertEqual(sess_row[0], "bk_crop")
+
+            # 3. Test mid-flow CANCEL (must reset session to idle)
+            cancel_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "CANCEL",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_cancel = await client.post("/sms/incoming", json=cancel_payload)
+            self.assertEqual(resp_cancel.status_code, 200)
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_cancel_reply = self.mock_send_sms.call_args[0]
+            self.assertIn("Your current conversation has been cancelled.", sent_cancel_reply)
+
+            # Verify session state is now idle
+            async with async_session_factory() as db:
+                sess_row = (
+                    await db.execute(
+                        text("SELECT state, context FROM sms_sessions WHERE phone = :p"),
+                        {"p": self.norm_phone},
+                    )
+                ).first()
+                self.assertEqual(sess_row[0], "idle")
+                self.assertEqual(sess_row[1], {})
 
 
 if __name__ == "__main__":

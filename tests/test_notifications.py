@@ -30,7 +30,7 @@ class TestNotifications(unittest.IsolatedAsyncioTestCase):
         self.farmer_a_id = str(uuid.uuid4())
         self.farmer_b_id = str(uuid.uuid4())
         self.phone_a = "8770578818"
-        self.phone_b = "8770578818"
+        self.phone_b = f"99{uuid.uuid4().int % 10**8:08d}"
 
         self.mock_send_sms = AsyncMock(return_value="mock_msg_id")
         self.sms_patcher = patch.object(
@@ -41,6 +41,8 @@ class TestNotifications(unittest.IsolatedAsyncioTestCase):
         self.sms_patcher.start()
 
         async with async_session_factory() as db:
+            await db.execute(text("DELETE FROM farmers WHERE phone = :p"), {"p": self.phone_a})
+            await db.commit()
             await db.execute(
                 text(
                     "INSERT INTO farmers (id, farmer_id, phone, name, is_active, is_verified, created_at) "
