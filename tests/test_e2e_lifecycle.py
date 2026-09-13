@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import httpx
 from sqlalchemy import text
 
+from app.config import get_settings
 from app.database import async_session_factory, engine
 from app.main import app
 from app.models.payment import Payment
@@ -683,8 +684,8 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             _, sent_conf_reply = self.mock_send_sms.call_args[0]
             self.assertIn("Booking confirmed!", sent_conf_reply)
             self.assertIn(booking_ref, sent_conf_reply)
-            self.assertIn(f"{get_settings().PUBLIC_URL}/p/", sent_conf_reply)
-            self.assertIn(f"{get_settings().PUBLIC_URL}/p/{booking_ref}", sent_conf_reply)
+            self.assertIn("hizru.me/p/", sent_conf_reply)
+            self.assertIn(f"hizru.me/p/{booking_ref}", sent_conf_reply)
             self.assertIn("Wheat", sent_conf_reply)
 
             # -----------------------------------------------------------------
@@ -747,7 +748,7 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             async with async_session_factory() as db:
                 procurement = Procurement(
                     procurement_id=f"PR-{uuid.uuid4().hex[:8].upper()}",
-                    booking_id=uuid.UUID(booking_id),
+                    booking_id=booking_db_id,
                     accepted_quantity=10.0,
                     unit_price=2200.0,
                     quality_grade="Grade A",

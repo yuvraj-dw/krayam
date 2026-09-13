@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.database import async_session_factory
 from app.exceptions import ValidationError
-from app.models.booking import BookingStatus
+from app.models.booking import Booking, BookingStatus
 from app.models.payment import Payment
 from app.models.procurement import Procurement
 from app.models.queue import QueueEntry
