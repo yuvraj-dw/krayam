@@ -53,6 +53,28 @@ COMMANDS = {
 }
 
 
+GREETING_COMMANDS = {"HI", "HELLO", "START", "NAMASTE", "HEY"}
+
+
+HELP_MESSAGE = (
+    "Available commands:\n"
+    "REGISTER - Register as a farmer\n"
+    "BOOK - Book a procurement slot\n"
+    "STATUS - Check booking status\n"
+    "QUEUE - Check queue position\n"
+    "CENTRE - Find procurement centres\n"
+    "PAYMENT - Check payment status\n"
+    "HISTORY - View past transactions\n"
+    "CANCEL - Cancel a booking or conversation\n"
+    "RESCHEDULE - Reschedule a booking\n"
+    "HELP - Show this message"
+)
+
+CANCEL_CONVERSATION_MESSAGE = (
+    "Your current conversation has been cancelled. Send HI to start again."
+)
+
+
 class SMSWebhookPayload(BaseModel):
     """SMS Gate webhook payload for incoming messages.
 
@@ -378,7 +400,37 @@ async def _handle_command(
     """Process a command or continue an active conversation. Returns None when
     the message should be ignored (e.g. a spam/service notice)."""
     stripped = text.strip()
+    upper_stripped = stripped.upper()
     command = stripped.split(maxsplit=1)[0].upper() if stripped else ""
+
+    # Global command overrides: CANCEL and HELP must take priority over active flows
+    if upper_stripped == "CANCEL":
+        session.state = "idle"
+        session.context = {}
+        return CANCEL_CONVERSATION_MESSAGE
+
+    if upper_stripped == "HELP":
+        return HELP_MESSAGE
+
+    # Basic greetings when session is idle
+    if upper_stripped in GREETING_COMMANDS and (session.state in ("idle", None) or not session.state):
+        farmer = await _get_farmer(db, phone)
+        if farmer:
+            return (
+                f"Namaste {farmer.name}! Welcome to Krayam.\n"
+                "Reply with a command:\n"
+                "- BOOK: Book a crop procurement slot\n"
+                "- STATUS: Check booking status\n"
+                "- QUEUE: Track live queue position\n"
+                "- PAYMENT: View payment details\n"
+                "- HISTORY: Past transactions\n"
+                "- HELP: View instructions"
+            )
+        return (
+            "Welcome to Krayam Procurement Platform.\n"
+            "- Send REGISTER to create an account\n"
+            "- Send HELP to see available commands and instructions"
+        )
 
     # If in a conversation flow, continue it
     if session.state and session.state != "idle":
@@ -391,19 +443,7 @@ async def _handle_command(
 
     # Match commands (case-insensitive)
     if command == "HELP":
-        return (
-            "Available commands:\n"
-            "REGISTER - Register as a farmer\n"
-            "BOOK - Book a procurement slot\n"
-            "STATUS - Check booking status\n"
-            "QUEUE - Check queue position\n"
-            "CENTRE - Find procurement centres\n"
-            "PAYMENT - Check payment status\n"
-            "HISTORY - View past transactions\n"
-            "CANCEL - Cancel a booking\n"
-            "RESCHEDULE - Reschedule a booking\n"
-            "HELP - Show this message"
-        )
+        return HELP_MESSAGE
 
     if command == "REGISTER":
         # Check if already registered
