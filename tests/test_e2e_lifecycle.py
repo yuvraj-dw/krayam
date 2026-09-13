@@ -14,8 +14,12 @@ from sqlalchemy import text
 
 from app.database import async_session_factory, engine
 from app.main import app
+from app.models.payment import Payment
+from app.models.procurement import Procurement
 from app.services.auth import auth_service
+from app.services.intent import IntentResult
 from app.services.operator import operator_service
+from app.services.queue import queue_service
 
 # Reduce database query log verbosity during test runs
 engine.echo = False
@@ -37,13 +41,14 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             new_callable=AsyncMock,
             return_value="mock_msg_id",
         )
-        self.sms_patcher.start()
+        self.mock_send_sms = self.sms_patcher.start()
 
         async with async_session_factory() as db:
             # Wipe any lingering test state for this phone first
             await db.execute(text("DELETE FROM otps WHERE phone = :p"), {"p": self.norm_phone})
-            # Wipe sms messages and notifications
+            # Wipe sms messages, sessions, and notifications
             await db.execute(text("DELETE FROM sms_messages WHERE phone = :p"), {"p": self.phone})
+            await db.execute(text("DELETE FROM sms_sessions WHERE phone = :p"), {"p": self.phone})
             await db.execute(
                 text(
                     "DELETE FROM notifications WHERE farmer_id IN (SELECT id FROM farmers WHERE phone = :p)"
@@ -100,6 +105,12 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 {"p": self.phone},
             )
             await db.execute(text("DELETE FROM farmers WHERE phone = :p"), {"p": self.phone})
+
+            # Wipe lingering test centres created in prior interrupted E2E runs
+            await db.execute(text("DELETE FROM slots WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"))
+            await db.execute(text("DELETE FROM centre_crops WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"))
+            await db.execute(text("DELETE FROM operators WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"))
+            await db.execute(text("DELETE FROM centres WHERE name LIKE 'Centre A E2E%'"))
             await db.commit()
 
             # Insert Centre A
@@ -158,9 +169,13 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
 
     async def asyncTearDown(self) -> None:
         async with async_session_factory() as db:
-            # Delete sms messages and notifications for phone or farmer
+            # Delete sms messages, sessions, and notifications for phone or farmer
             await db.execute(
                 text("DELETE FROM sms_messages WHERE phone = :p"),
+                {"p": self.phone},
+            )
+            await db.execute(
+                text("DELETE FROM sms_sessions WHERE phone = :p"),
                 {"p": self.phone},
             )
             await db.execute(
@@ -544,6 +559,247 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             analytics_data = analytics_resp.json()
             self.assertGreaterEqual(analytics_data["farmers_served"], 1)
             self.assertGreaterEqual(analytics_data["total_quantity_procured"], 19.5)
+
+    async def test_e2e_sms_lifecycle_and_natural_language(self) -> None:
+        # Register test farmer in database with self.phone
+        farmer_id = uuid.uuid4()
+        async with async_session_factory() as db:
+            await db.execute(
+                text(
+                    "INSERT INTO farmers (id, farmer_id, phone, name, village, district, state, pincode, latitude, longitude, is_active, is_verified, created_at) "
+                    "VALUES (:id, :fid, :phone, :name, 'Nashik Rural', 'Nashik', 'Maharashtra', '422001', 19.0, 74.0, true, true, now())"
+                ),
+                {
+                    "id": str(farmer_id),
+                    "fid": f"F-{self.test_prefix}",
+                    "phone": self.phone,
+                    "name": f"Farmer {self.test_prefix}",
+                },
+            )
+            await db.commit()
+
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # -----------------------------------------------------------------
+            # Step 1: Natural Language Trigger
+            # -----------------------------------------------------------------
+            # Mock intent_service.parse to return structured natural language intent
+            # for Hinglish/Hindi text: "Mujhe 25 quintal wheat bechna hai kal"
+            mock_intent = IntentResult(
+                intent="book",
+                crop="Wheat",
+                quantity=25.0,
+                unit="quintal",
+                expected_date=str(self.tomorrow),
+                confidence=0.95,
+                missing=[],
+                needs_clarification=False,
+            )
+
+            with patch("app.routers.sms.webhook.intent_service.parse", new_callable=AsyncMock) as mock_parse:
+                mock_parse.return_value = mock_intent
+
+                nl_payload = {
+                    "event": "sms:received",
+                    "payload": {
+                        "messageId": str(uuid.uuid4()),
+                        "sender": self.phone,
+                        "message": "Mujhe 25 quintal wheat bechna hai kal",
+                    },
+                }
+                self.mock_send_sms.reset_mock()
+                resp_nl = await client.post("/sms/incoming", json=nl_payload)
+                self.assertEqual(resp_nl.status_code, 200)
+
+                # Verify intent parser was invoked with the incoming text
+                mock_parse.assert_awaited_once_with("Mujhe 25 quintal wheat bechna hai kal")
+
+                # Verify SMS reply recommends centres (e.g. "Select a centre by replying with its number:" or "1. Centre A...")
+                self.mock_send_sms.assert_awaited_once()
+                sent_phone, sent_reply = self.mock_send_sms.call_args[0]
+                self.assertEqual(sent_phone, self.phone)
+                self.assertIn("Select a centre", sent_reply)
+                self.assertIn(f"Centre A {self.test_prefix}", sent_reply)
+
+            # -----------------------------------------------------------------
+            # Step 2: Centre Selection
+            # -----------------------------------------------------------------
+            centre_choice_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "1",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_centre = await client.post("/sms/incoming", json=centre_choice_payload)
+            self.assertEqual(resp_centre.status_code, 200)
+
+            # Verify SMS reply lists available time slots
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_slot_reply = self.mock_send_sms.call_args[0]
+            self.assertIn("Select a time slot", sent_slot_reply)
+            self.assertIn("09:00-10:00", sent_slot_reply)
+
+            # -----------------------------------------------------------------
+            # Step 3: Slot Selection & Confirmation
+            # -----------------------------------------------------------------
+            slot_choice_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "1",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_slot = await client.post("/sms/incoming", json=slot_choice_payload)
+            self.assertEqual(resp_slot.status_code, 200)
+
+            # Verify booking is created in database
+            async with async_session_factory() as db:
+                booking_row = (
+                    await db.execute(
+                        text(
+                            "SELECT id, booking_id, crop, quantity, status FROM bookings "
+                            "WHERE farmer_id = :fid ORDER BY created_at DESC LIMIT 1"
+                        ),
+                        {"fid": str(farmer_id)},
+                    )
+                ).first()
+                self.assertIsNotNone(booking_row)
+                booking_db_id = booking_row[0]
+                booking_ref = booking_row[1]
+                self.assertEqual(booking_row[2], "Wheat")
+                self.assertEqual(float(booking_row[3]), 25.0)
+
+            # Verify confirmation response text contains booking reference and digital gate pass URL
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_conf_reply = self.mock_send_sms.call_args[0]
+            self.assertIn("Booking confirmed!", sent_conf_reply)
+            self.assertIn(booking_ref, sent_conf_reply)
+            self.assertIn("https://krayam.in/p/", sent_conf_reply)
+            self.assertIn(f"https://krayam.in/p/{booking_ref}", sent_conf_reply)
+            self.assertIn("Wheat", sent_conf_reply)
+
+            # -----------------------------------------------------------------
+            # Step 4: SMS Status Check
+            # -----------------------------------------------------------------
+            status_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "STATUS",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_status = await client.post("/sms/incoming", json=status_payload)
+            self.assertEqual(resp_status.status_code, 200)
+
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_status_reply = self.mock_send_sms.call_args[0]
+            self.assertIn(f"Booking {booking_ref}: Wheat", sent_status_reply)
+            self.assertIn("25", sent_status_reply)
+            self.assertIn("quintal", sent_status_reply)
+            self.assertIn(self.tomorrow.strftime("%d-%m-%Y"), sent_status_reply)
+            self.assertIn("confirmed", sent_status_reply)
+
+            # -----------------------------------------------------------------
+            # Step 5: SMS Queue Tracking
+            # -----------------------------------------------------------------
+            # Check farmer into queue via queue_service.check_in
+            async with async_session_factory() as db:
+                queue_entry = await queue_service.check_in(
+                    db,
+                    booking_id=booking_db_id,
+                    centre_id=uuid.UUID(self.centre_id),
+                )
+                await db.commit()
+                self.assertEqual(queue_entry.position, 1)
+
+            queue_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "QUEUE",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_queue = await client.post("/sms/incoming", json=queue_payload)
+            self.assertEqual(resp_queue.status_code, 200)
+
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_queue_reply = self.mock_send_sms.call_args[0]
+            self.assertIn("Queue position: 1", sent_queue_reply)
+            self.assertIn("Ahead of you: 0", sent_queue_reply)
+
+            # -----------------------------------------------------------------
+            # Step 6: SMS Payment & History Tracking
+            # -----------------------------------------------------------------
+            # Complete procurement and initiate payment in DB for this booking
+            async with async_session_factory() as db:
+                procurement = Procurement(
+                    procurement_id=f"PR-{uuid.uuid4().hex[:8].upper()}",
+                    booking_id=booking_db_id,
+                    accepted_quantity=24.5,
+                    unit="quintal",
+                    quality_notes="Natural language E2E test",
+                    status="completed",
+                )
+                db.add(procurement)
+                await db.flush()
+
+                payment = Payment(
+                    payment_id=f"PAY-{uuid.uuid4().hex[:8].upper()}",
+                    farmer_id=farmer_id,
+                    procurement_id=procurement.id,
+                    amount=24.5 * 2400.0,
+                    quantity=24.5,
+                    rate=2400.0,
+                    status="initiated",
+                )
+                db.add(payment)
+                await db.commit()
+
+            # Test SMS PAYMENT
+            payment_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "PAYMENT",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_payment = await client.post("/sms/incoming", json=payment_payload)
+            self.assertEqual(resp_payment.status_code, 200)
+
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_pmt_reply = self.mock_send_sms.call_args[0]
+            self.assertIn("Rs.58,800", sent_pmt_reply)
+            self.assertIn("initiated", sent_pmt_reply)
+
+            # Test SMS HISTORY
+            history_payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": "HISTORY",
+                },
+            }
+            self.mock_send_sms.reset_mock()
+            resp_history = await client.post("/sms/incoming", json=history_payload)
+            self.assertEqual(resp_history.status_code, 200)
+
+            self.mock_send_sms.assert_awaited_once()
+            _, sent_history_reply = self.mock_send_sms.call_args[0]
+            self.assertIn(booking_ref, sent_history_reply)
+            self.assertIn("Wheat", sent_history_reply)
 
 
 if __name__ == "__main__":
