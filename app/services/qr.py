@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import html
+from html import escape
 import json
 import re
 from typing import Any
@@ -198,6 +199,258 @@ class QRService:
             raise ValidationError("QR code signature verification failed: payload has been tampered with")
 
         return data
+
+    def render_public_receipt_html(
+        self,
+        procurement: Procurement,
+        booking: Booking,
+        farmer: Farmer,
+        centre_name: str,
+        payment: Payment | None = None,
+    ) -> str:
+        """
+        Renders a responsive HTML procurement delivery & payment receipt with an embedded signed SVG QR.
+        """
+        qr_res = self.generate_procurement_receipt_qr(
+            procurement=procurement,
+            booking=booking,
+            farmer=farmer,
+            payment=payment,
+        )
+
+        safe_proc_id = escape(procurement.procurement_id or "")
+        safe_booking_id = escape(booking.booking_id or "")
+        safe_farmer_name = escape(farmer.name or "Registered Farmer")
+        safe_phone = escape(farmer.phone or "")
+        safe_crop = escape(booking.crop or "Produce")
+        safe_qty = f"{float(procurement.accepted_quantity):.1f} {procurement.unit}"
+        safe_rate = f"Rs. {float(procurement.unit_price):.2f}/{procurement.unit}" if procurement.unit_price else "Standard MSP"
+        safe_centre = escape(centre_name or "Mandi Procurement Centre")
+        safe_date = str(procurement.created_at.date() if procurement.created_at else "Today")
+        safe_grade = escape(procurement.quality_grade or "Standard Quality")
+
+        if payment:
+            safe_payment_id = escape(payment.payment_id or "")
+            safe_amount = f"Rs. {float(payment.amount):,.2f}"
+            safe_p_status = (
+                payment.status.value.upper()
+                if hasattr(payment.status, "value")
+                else str(payment.status).upper()
+            )
+        else:
+            safe_payment_id = "Pending"
+            safe_amount = "Under Processing"
+            safe_p_status = "PENDING"
+
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Krayam Delivery & Payment Receipt - {safe_proc_id}</title>
+  <style>
+    :root {{
+      --primary: #15803d;
+      --primary-dark: #166534;
+      --accent: #22c55e;
+      --bg: #f0fdf4;
+      --card-bg: #ffffff;
+      --text: #1f2937;
+      --text-muted: #6b7280;
+      --border: #e5e7eb;
+    }}
+    * {{
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }}
+    body {{
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 1.25rem;
+    }}
+    .receipt-card {{
+      background: var(--card-bg);
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(21, 128, 61, 0.12), 0 4px 6px rgba(0, 0, 0, 0.04);
+      width: 100%;
+      max-width: 440px;
+      overflow: hidden;
+      border: 1px solid #bbf7d0;
+    }}
+    .receipt-header {{
+      background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+      color: white;
+      padding: 1.75rem 1.5rem;
+      text-align: center;
+    }}
+    .receipt-header h1 {{
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }}
+    .receipt-header p {{
+      font-size: 0.85rem;
+      opacity: 0.9;
+      margin-top: 0.35rem;
+    }}
+    .amount-highlight {{
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 10px;
+      display: inline-block;
+      width: 85%;
+    }}
+    .amount-highlight .val {{
+      font-size: 1.6rem;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+    }}
+    .amount-highlight .lbl {{
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      opacity: 0.85;
+      font-weight: 600;
+    }}
+    .qr-container {{
+      background: white;
+      padding: 1.5rem;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      border-bottom: 1px dashed #cbd5e1;
+    }}
+    .qr-box {{
+      width: 220px;
+      height: 220px;
+      border: 2px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 10px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }}
+    .qr-box svg {{
+      width: 100%;
+      height: 100%;
+    }}
+    .receipt-details {{
+      padding: 1.25rem 1.5rem;
+    }}
+    .detail-row {{
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 0.92rem;
+    }}
+    .detail-row:last-child {{
+      border-bottom: none;
+    }}
+    .detail-label {{
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }}
+    .detail-value {{
+      font-weight: 600;
+      color: var(--text);
+      text-align: right;
+    }}
+    .status-badge {{
+      display: inline-block;
+      background: #ecfdf5;
+      color: #065f46;
+      border: 1px solid #a7f3d0;
+      padding: 0.25rem 0.6rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }}
+    .receipt-footer {{
+      background: #f8fafc;
+      padding: 1.2rem;
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      border-top: 1px solid var(--border);
+      line-height: 1.4;
+    }}
+  </style>
+</head>
+<body>
+  <div class="receipt-card">
+    <div class="receipt-header">
+      <h1>PROCUREMENT & PAYMENT RECEIPT</h1>
+      <p>Official Verification & Settlement Voucher</p>
+      <div class="amount-highlight">
+        <div class="lbl">Total Settlement Amount</div>
+        <div class="val">{safe_amount}</div>
+      </div>
+    </div>
+
+    <div class="qr-container">
+      <div class="qr-box">
+        {qr_res.svg}
+      </div>
+    </div>
+
+    <div class="receipt-details">
+      <div class="detail-row">
+        <span class="detail-label">Payment Status</span>
+        <span class="status-badge">{safe_p_status}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Payment ID</span>
+        <span class="detail-value">{safe_payment_id}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Procurement ID</span>
+        <span class="detail-value">{safe_proc_id}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Booking ID</span>
+        <span class="detail-value">{safe_booking_id}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Farmer</span>
+        <span class="detail-value">{safe_farmer_name}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Crop & Accepted Qty</span>
+        <span class="detail-value">{safe_crop} - {safe_qty}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Grade / Unit Rate</span>
+        <span class="detail-value">{safe_grade} ({safe_rate})</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Mandi Centre</span>
+        <span class="detail-value">{safe_centre}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-label">Date Recorded</span>
+        <span class="detail-value">{safe_date}</span>
+      </div>
+    </div>
+
+    <div class="receipt-footer">
+      This is a cryptographically signed digital receipt generated by Krayam.<br/>
+      Scan the QR code to verify token signature and authenticity.
+    </div>
+  </div>
+</body>
+</html>"""
 
     def render_public_pass_html(
         self,

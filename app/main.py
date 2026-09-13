@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -48,6 +48,9 @@ app.include_router(api_v1_router, prefix="/api/v1")
 app.include_router(sms_router)
 
 
+from app.models.procurement import Procurement
+from app.models.payment import Payment
+
 @app.get("/p/{booking_id}", response_class=HTMLResponse)
 async def public_gate_pass(
     booking_id: str,
@@ -85,3 +88,58 @@ async def public_gate_pass(
 
     html_content = qr_service.render_public_pass_html(booking, farmer, centre_name)
     return HTMLResponse(content=html_content, media_type="text/html")
+
+
+@app.get("/r/{identifier}", response_class=HTMLResponse)
+async def public_procurement_receipt(
+    identifier: str,
+    db: AsyncSession = Depends(get_db),
+) -> HTMLResponse:
+    clean_id = identifier.strip()
+
+    # Match by payment_id, procurement_id, or booking_id
+    stmt = (
+        select(Procurement, Booking, Farmer, Payment)
+        .join(Booking, Procurement.booking_id == Booking.id)
+        .join(Farmer, Booking.farmer_id == Farmer.id)
+        .outerjoin(Payment, Payment.procurement_id == Procurement.id)
+        .where(
+            or_(
+                Procurement.procurement_id == clean_id.upper(),
+                Booking.booking_id == clean_id.upper(),
+                Payment.payment_id == clean_id.upper(),
+            )
+        )
+        .order_by(Procurement.created_at.desc())
+        .limit(1)
+    )
+
+    res = await db.execute(stmt)
+    row = res.first()
+
+    if not row:
+        return HTMLResponse(
+            "<h3>Procurement or Payment Receipt not found</h3>",
+            status_code=404,
+            media_type="text/html",
+        )
+
+    procurement, booking, farmer, payment = row
+
+    centre_name = "Krayam Centre"
+    if booking.centre_id:
+        c_stmt = select(Centre.name).where(Centre.id == booking.centre_id)
+        c_res = await db.execute(c_stmt)
+        c_val = c_res.scalar_one_or_none()
+        if c_val:
+            centre_name = c_val
+
+    html_content = qr_service.render_public_receipt_html(
+        procurement=procurement,
+        booking=booking,
+        farmer=farmer,
+        centre_name=centre_name,
+        payment=payment,
+    )
+    return HTMLResponse(content=html_content, media_type="text/html")
+

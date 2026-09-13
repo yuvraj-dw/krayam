@@ -188,9 +188,10 @@ class NotificationService:
     async def notify_payment_initiated(
         self, db: AsyncSession, payment: Payment, booking: Booking, farmer: Farmer
     ) -> None:
+        receipt_url = f"{get_settings().PUBLIC_URL}/r/{payment.payment_id}"
         text = (
             f"Krayam: Payment Rs.{format_currency(float(payment.amount))} for "
-            f"{payment.payment_id} initiated. Send PAYMENT for status."
+            f"{payment.payment_id} initiated. Receipt: {receipt_url}"
         )
         await _record_notification(
             db,
@@ -204,9 +205,10 @@ class NotificationService:
     async def notify_payment_confirmed(
         self, db: AsyncSession, payment: Payment, booking: Booking, farmer: Farmer
     ) -> None:
+        receipt_url = f"{get_settings().PUBLIC_URL}/r/{payment.payment_id}"
         text = (
             f"Krayam: Payment Rs.{format_currency(float(payment.amount))} for "
-            f"{booking.booking_id} confirmed by the mandi."
+            f"{booking.booking_id} confirmed. Receipt: {receipt_url}"
         )
         await _record_notification(
             db,
