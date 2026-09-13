@@ -33,6 +33,7 @@ class Settings(BaseSettings):
 
     # App
     APP_NAME: str = "Krayam"
+    PUBLIC_URL: str = "https://hizru.me"
     DEBUG: bool = False
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 

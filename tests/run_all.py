@@ -1,8 +1,14 @@
 import logging
 import sys
 import unittest
+from pathlib import Path
 
-from app.database import engine
+# Ensure project root is in sys.path when run directly as a script
+project_root = str(Path(__file__).resolve().parent.parent)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from app.database import engine  # noqa: E402
 
 # Turn off verbose SQL echo during test runs
 engine.echo = False

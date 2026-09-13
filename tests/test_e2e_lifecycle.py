@@ -20,6 +20,7 @@ from app.services.auth import auth_service
 from app.services.intent import IntentResult
 from app.services.operator import operator_service
 from app.services.queue import queue_service
+from app.services.sms_gate import sms_gate_client
 
 # Reduce database query log verbosity during test runs
 engine.echo = False
@@ -36,12 +37,13 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
         self.centre_crop_id = str(uuid.uuid4())
         self.tomorrow = date.today() + timedelta(days=1)
 
-        self.sms_patcher = patch(
-            "app.services.sms_gate.SMSGateClient.send_sms",
-            new_callable=AsyncMock,
-            return_value="mock_msg_id",
+        self.mock_send_sms = AsyncMock(return_value="mock_msg_id")
+        self.sms_patcher = patch.object(
+            sms_gate_client,
+            "send_sms",
+            self.mock_send_sms,
         )
-        self.mock_send_sms = self.sms_patcher.start()
+        self.sms_patcher.start()
 
         async with async_session_factory() as db:
             # Wipe any lingering test state for this phone first
@@ -51,7 +53,7 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             await db.execute(text("DELETE FROM sms_sessions WHERE phone = :p"), {"p": self.phone})
             await db.execute(
                 text(
-                    "DELETE FROM notifications WHERE farmer_id IN (SELECT id FROM farmers WHERE phone = :p)"
+                    "DELETE FROM notifications WHERE phone = :p OR farmer_id IN (SELECT id FROM farmers WHERE phone = :p)"
                 ),
                 {"p": self.phone},
             )
@@ -105,12 +107,6 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 {"p": self.phone},
             )
             await db.execute(text("DELETE FROM farmers WHERE phone = :p"), {"p": self.phone})
-
-            # Wipe lingering test centres created in prior interrupted E2E runs
-            await db.execute(text("DELETE FROM slots WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"))
-            await db.execute(text("DELETE FROM centre_crops WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"))
-            await db.execute(text("DELETE FROM operators WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"))
-            await db.execute(text("DELETE FROM centres WHERE name LIKE 'Centre A E2E%'"))
             await db.commit()
 
             # Insert Centre A
@@ -572,7 +568,7 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 {
                     "id": str(farmer_id),
                     "fid": f"F-{self.test_prefix}",
-                    "phone": self.phone,
+                    "phone": self.norm_phone,
                     "name": f"Farmer {self.test_prefix}",
                 },
             )
@@ -597,7 +593,11 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 needs_clarification=False,
             )
 
-            with patch("app.routers.sms.webhook.intent_service.parse", new_callable=AsyncMock) as mock_parse:
+            with (
+                patch("app.routers.sms.webhook.intent_service.parse", new_callable=AsyncMock) as mock_parse,
+                patch("app.routers.sms.webhook.get_settings") as mock_settings,
+            ):
+                mock_settings.return_value.LLM_ENABLED = True
                 mock_parse.return_value = mock_intent
 
                 nl_payload = {
@@ -663,7 +663,7 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 booking_row = (
                     await db.execute(
                         text(
-                            "SELECT id, booking_id, crop, quantity, status FROM bookings "
+                            "SELECT id, booking_id, crop, quantity, status, centre_id FROM bookings "
                             "WHERE farmer_id = :fid ORDER BY created_at DESC LIMIT 1"
                         ),
                         {"fid": str(farmer_id)},
@@ -674,14 +674,15 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 booking_ref = booking_row[1]
                 self.assertEqual(booking_row[2], "Wheat")
                 self.assertEqual(float(booking_row[3]), 25.0)
+                booking_centre_id = booking_row[5]
 
             # Verify confirmation response text contains booking reference and digital gate pass URL
             self.mock_send_sms.assert_awaited_once()
             _, sent_conf_reply = self.mock_send_sms.call_args[0]
             self.assertIn("Booking confirmed!", sent_conf_reply)
             self.assertIn(booking_ref, sent_conf_reply)
-            self.assertIn("https://krayam.in/p/", sent_conf_reply)
-            self.assertIn(f"https://krayam.in/p/{booking_ref}", sent_conf_reply)
+            self.assertIn(f"{get_settings().PUBLIC_URL}/p/", sent_conf_reply)
+            self.assertIn(f"{get_settings().PUBLIC_URL}/p/{booking_ref}", sent_conf_reply)
             self.assertIn("Wheat", sent_conf_reply)
 
             # -----------------------------------------------------------------
@@ -715,7 +716,7 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 queue_entry = await queue_service.check_in(
                     db,
                     booking_id=booking_db_id,
-                    centre_id=uuid.UUID(self.centre_id),
+                    centre_id=booking_centre_id,
                 )
                 await db.commit()
                 self.assertEqual(queue_entry.position, 1)

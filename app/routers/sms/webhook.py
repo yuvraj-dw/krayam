@@ -356,7 +356,7 @@ async def _handle_booking_flow(
         if centre_id:
             with contextlib.suppress(Exception):
                 await slot_service.refresh_availability(db, uuid.UUID(centre_id))
-        gate_pass_url = f"https://krayam.in/p/{booking.booking_id}"
+        gate_pass_url = f"{get_settings().PUBLIC_URL}/p/{booking.booking_id}"
         return (
             f"Booking confirmed! Ref: {booking.booking_id}\n"
             f"Gate pass: {gate_pass_url}\n"
