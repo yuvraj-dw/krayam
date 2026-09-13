@@ -197,10 +197,17 @@ async def _dispatch(db: AsyncSession, operator: Operator, event: SyncEventIn) ->
         if quantity is None:
             raise ValidationError("Missing accepted_quantity")
         quality_notes = payload.get("quality_notes")
+        unit_price = payload.get("unit_price")
+        quality_grade = payload.get("quality_grade")
+        if unit_price is None:
+            # Fallback for offline sync if not provided: booking centre crop rate or default 2500.0
+            unit_price = 2500.0
         procurement = await procurement_service.record(
             db,
             booking_id=booking_id,
             accepted_quantity=float(quantity),
+            unit_price=float(unit_price),
+            quality_grade=str(quality_grade) if quality_grade else None,
             quality_notes=str(quality_notes) if quality_notes else None,
             client_event_id=event.client_event_id,
         )

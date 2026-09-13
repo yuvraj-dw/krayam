@@ -168,9 +168,13 @@ class NotificationService:
     ) -> None:
         centre = await _centre_name(db, booking.centre_id)
         at_centre = f" at {centre}" if centre else ""
+        price_info = ""
+        if procurement.unit_price:
+            price_info = f" @ Rs.{float(procurement.unit_price):g}/{procurement.unit}"
+        grade_info = f" ({procurement.quality_grade})" if procurement.quality_grade else ""
         text = (
             f"Krayam: {_fmt_qty(procurement.accepted_quantity)} {procurement.unit} "
-            f"{booking.crop} accepted{at_centre}."
+            f"{booking.crop}{grade_info} accepted{at_centre}{price_info}."
         )
         await _record_notification(
             db,

@@ -1,15 +1,25 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import NotFoundError, ValidationError
 from app.models.booking import BookingStatus
+from app.models.centre import CentreCrop
 from app.models.procurement import Procurement
 from app.services.booking import booking_service
 from app.services.event import event_service
 from app.services.outbox import outbox_service
+
+DEFAULT_PRICE_RANGES = {
+    "wheat": (2000.0, 3000.0),
+    "rice": (1800.0, 2800.0),
+    "paddy": (1800.0, 2800.0),
+    "soybean": (3500.0, 5500.0),
+    "mustard": (4000.0, 6000.0),
+}
+FALLBACK_PRICE_RANGE = (1000.0, 10000.0)
 
 
 def generate_procurement_id() -> str:
@@ -23,6 +33,8 @@ class ProcurementService:
         *,
         booking_id: uuid.UUID,
         accepted_quantity: float,
+        unit_price: float,
+        quality_grade: str | None = None,
         unit: str = "quintal",
         quality_notes: str | None = None,
         client_event_id: uuid.UUID | None = None,
@@ -37,6 +49,36 @@ class ProcurementService:
                 f"(status {booking.status.value})"
             )
 
+        centre_crop = None
+        if booking.centre_id:
+            res = await db.execute(
+                select(CentreCrop).where(
+                    CentreCrop.centre_id == booking.centre_id,
+                    func.lower(CentreCrop.crop_name) == func.lower(booking.crop),
+                    CentreCrop.is_active.is_(True),
+                )
+            )
+            centre_crop = res.scalar_one_or_none()
+
+        lower_crop = (booking.crop or "").strip().lower()
+        def_min, def_max = DEFAULT_PRICE_RANGES.get(lower_crop, FALLBACK_PRICE_RANGE)
+        min_price = (
+            float(centre_crop.min_price_per_unit)
+            if centre_crop and centre_crop.min_price_per_unit is not None
+            else def_min
+        )
+        max_price = (
+            float(centre_crop.max_price_per_unit)
+            if centre_crop and centre_crop.max_price_per_unit is not None
+            else def_max
+        )
+
+        if unit_price < min_price or unit_price > max_price:
+            raise ValidationError(
+                f"Offered price Rs.{unit_price:g} is outside permitted range "
+                f"Rs.{min_price:g} - Rs.{max_price:g} per {unit} for {booking.crop}"
+            )
+
         existing = (
             await db.execute(select(Procurement).where(Procurement.booking_id == booking_id))
         ).scalar_one_or_none()
@@ -47,6 +89,8 @@ class ProcurementService:
             procurement_id=generate_procurement_id(),
             booking_id=booking.id,
             accepted_quantity=accepted_quantity,
+            unit_price=unit_price,
+            quality_grade=quality_grade,
             unit=unit,
             quality_notes=quality_notes,
         )
@@ -62,6 +106,8 @@ class ProcurementService:
                 "procurement_id": procurement.procurement_id,
                 "accepted_quantity": accepted_quantity,
                 "booked_quantity": float(booking.quantity),
+                "unit_price": unit_price,
+                "quality_grade": quality_grade,
             },
         )
         await outbox_service.emit(
@@ -73,6 +119,8 @@ class ProcurementService:
                 "procurement_id": procurement.procurement_id,
                 "accepted_quantity": accepted_quantity,
                 "booked_quantity": float(booking.quantity),
+                "unit_price": unit_price,
+                "quality_grade": quality_grade,
             },
             centre_id=booking.centre_id,
             farmer_id=booking.farmer_id,

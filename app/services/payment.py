@@ -36,7 +36,7 @@ class PaymentService:
 
         booking = await booking_service.get_by_id(db, procurement.booking_id)
 
-        rate = await self._applicable_rate(db, booking)
+        rate = float(procurement.unit_price) if procurement.unit_price else await self._applicable_rate(db, booking)
         accepted = float(procurement.accepted_quantity)
         amount = round(accepted * rate, 2)
 

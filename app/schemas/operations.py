@@ -35,6 +35,8 @@ class QueueSummary(BaseModel):
 class ProcurementRecordRequest(BaseModel):
     booking_id: UUID
     accepted_quantity: float
+    unit_price: float = Field(..., gt=0)
+    quality_grade: str | None = None
     unit: str = "quintal"
     quality_notes: str | None = None
 
@@ -44,6 +46,8 @@ class ProcurementResponse(BaseModel):
     procurement_id: str
     booking_id: UUID
     accepted_quantity: float
+    unit_price: float
+    quality_grade: str | None = None
     unit: str
     quality_notes: str | None = None
     processing_start: datetime | None = None

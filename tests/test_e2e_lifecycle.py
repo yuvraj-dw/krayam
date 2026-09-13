@@ -449,6 +449,8 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 json={
                     "booking_id": booking_id,
                     "accepted_quantity": 19.5,
+                    "unit_price": 2400.0,
+                    "quality_grade": "Grade A",
                     "unit": "quintal",
                     "quality_notes": "Grade A Wheat verified",
                 },
@@ -745,10 +747,11 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             async with async_session_factory() as db:
                 procurement = Procurement(
                     procurement_id=f"PR-{uuid.uuid4().hex[:8].upper()}",
-                    booking_id=booking_db_id,
-                    accepted_quantity=24.5,
+                    booking_id=uuid.UUID(booking_id),
+                    accepted_quantity=10.0,
+                    unit_price=2200.0,
+                    quality_grade="Grade A",
                     unit="quintal",
-                    quality_notes="Natural language E2E test",
                     status="completed",
                 )
                 db.add(procurement)

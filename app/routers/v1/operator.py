@@ -235,6 +235,8 @@ async def record_procurement(
         db,
         booking_id=body.booking_id,
         accepted_quantity=body.accepted_quantity,
+        unit_price=body.unit_price,
+        quality_grade=body.quality_grade,
         unit=body.unit,
         quality_notes=body.quality_notes,
     )

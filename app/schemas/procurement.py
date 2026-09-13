@@ -38,6 +38,8 @@ class CentreUpdate(BaseModel):
 class CentreCropCreate(BaseModel):
     crop_name: str
     rate_per_unit: float | None = None
+    min_price_per_unit: float | None = None
+    max_price_per_unit: float | None = None
     unit: str = "quintal"
     is_active: bool = True
 
@@ -46,6 +48,8 @@ class CentreCropResponse(BaseModel):
     id: UUID
     crop_name: str
     rate_per_unit: float | None = None
+    min_price_per_unit: float | None = None
+    max_price_per_unit: float | None = None
     unit: str
     is_active: bool
 

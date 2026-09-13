@@ -601,7 +601,31 @@ async def _handle_command(
             )
         lines = []
         for p in rows:
-            lines.append(f"{p.payment_id}: Rs.{format_currency(p.amount)} ({p.status.value})")
+            proc_p = None
+            if p.procurement_id:
+                proc_p = (
+                    await db.execute(
+                        select(Procurement).where(Procurement.id == p.procurement_id)
+                    )
+                ).scalar_one_or_none()
+            crop_name = None
+            if proc_p and proc_p.booking_id:
+                b_row = (
+                    await db.execute(
+                        select(Booking).where(Booking.id == proc_p.booking_id)
+                    )
+                ).scalar_one_or_none()
+                if b_row:
+                    crop_name = b_row.crop
+
+            details = []
+            if crop_name:
+                details.append(crop_name)
+            if proc_p:
+                details.append(f"{float(proc_p.accepted_quantity):g} {proc_p.unit}")
+                details.append(f"Rs.{float(proc_p.unit_price):g}/{proc_p.unit}")
+            detail_str = f" ({', '.join(details)})" if details else ""
+            lines.append(f"{p.payment_id}: Rs.{format_currency(p.amount)}{detail_str} ({p.status.value})")
         return "\n".join(lines)
 
     if command == "HISTORY":

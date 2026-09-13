@@ -201,6 +201,8 @@ class TestOperator(unittest.IsolatedAsyncioTestCase):
                 json={
                     "booking_id": self.booking_a_id,
                     "accepted_quantity": 10.0,
+                    "unit_price": 2400.0,
+                    "quality_grade": "Grade A",
                     "unit": "quintal",
                 },
                 headers=self.headers_a,
@@ -234,6 +236,72 @@ class TestOperator(unittest.IsolatedAsyncioTestCase):
                 headers=self.headers_a,
             )
             self.assertEqual(resp_ver.status_code, 200)
+
+            # Verify payment calculation equals accepted_quantity * unit_price
+            self.assertEqual(resp_pmt1.json()["quantity"], 10.0)
+            self.assertEqual(resp_pmt1.json()["rate"], 2400.0)
+            self.assertEqual(resp_pmt1.json()["amount"], 24000.0)
+
+    async def test_procurement_price_range_validation(self) -> None:
+        """Test that offering price below min or above max is rejected with 422 ValidationError."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            # Check-in booking A (Wheat: default min 2000, max 3000)
+            resp_ci = await client.post(
+                "/api/v1/operator/check-in",
+                json={"booking_id": self.booking_a_id},
+                headers=self.headers_a,
+            )
+            self.assertEqual(resp_ci.status_code, 200)
+            qe_id = resp_ci.json()["id"]
+
+            await client.post(f"/api/v1/operator/queue/{qe_id}/start", headers=self.headers_a)
+
+            # Price below min (Wheat min is 2000) -> 422
+            resp_low = await client.post(
+                "/api/v1/operator/procurements",
+                json={
+                    "booking_id": self.booking_a_id,
+                    "accepted_quantity": 5.0,
+                    "unit_price": 1500.0,
+                    "unit": "quintal",
+                },
+                headers=self.headers_a,
+            )
+            self.assertEqual(resp_low.status_code, 422)
+            self.assertIn("outside permitted range", resp_low.text)
+
+            # Price above max (Wheat max is 3000) -> 422
+            resp_high = await client.post(
+                "/api/v1/operator/procurements",
+                json={
+                    "booking_id": self.booking_a_id,
+                    "accepted_quantity": 5.0,
+                    "unit_price": 3500.0,
+                    "unit": "quintal",
+                },
+                headers=self.headers_a,
+            )
+            self.assertEqual(resp_high.status_code, 422)
+            self.assertIn("outside permitted range", resp_high.text)
+
+            # Valid price within range -> 201 Created
+            resp_valid = await client.post(
+                "/api/v1/operator/procurements",
+                json={
+                    "booking_id": self.booking_a_id,
+                    "accepted_quantity": 5.0,
+                    "unit_price": 2500.0,
+                    "quality_grade": "Grade A",
+                    "unit": "quintal",
+                },
+                headers=self.headers_a,
+            )
+            self.assertEqual(resp_valid.status_code, 201)
+            proc_valid = resp_valid.json()
+            self.assertEqual(proc_valid["unit_price"], 2500.0)
+            self.assertEqual(proc_valid["quality_grade"], "Grade A")
 
     async def test_entity_events_idor_security_regression(self) -> None:
         """Regression test for Fix 1: cross-centre payment/procurement events must be blocked."""
