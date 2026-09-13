@@ -8,6 +8,8 @@ from sqlalchemy import text
 from app.database import async_session_factory, engine
 from app.main import app
 from app.services.bus import bus
+from app.services.sms_gate import sms_gate_client
+from unittest.mock import patch, AsyncMock
 
 
 class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
@@ -16,9 +18,17 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
         self.centre_id = str(uuid.uuid4())
         self.farmer_id = str(uuid.uuid4())
         self.booking_id = str(uuid.uuid4())
-        self.phone = f"95{uuid.uuid4().int % 10**8:08d}"
+        self.phone = "8770578818"
         self.tomorrow = date.today() + timedelta(days=1)
         self.booking_code = f"BK-{self.test_prefix}"
+
+        self.mock_send_sms = AsyncMock(return_value="mock_msg_id")
+        self.sms_patcher = patch.object(
+            sms_gate_client,
+            "send_sms",
+            self.mock_send_sms,
+        )
+        self.sms_patcher.start()
 
         async with async_session_factory() as db:
             await db.execute(
@@ -67,6 +77,7 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
             await db.execute(text("DELETE FROM centres WHERE id = :cid"), {"cid": self.centre_id})
             await db.execute(text("DELETE FROM farmers WHERE id = :fid"), {"fid": self.farmer_id})
             await db.commit()
+        self.sms_patcher.stop()
         await engine.dispose()
 
     async def test_sms_help_and_status(self) -> None:
@@ -239,7 +250,11 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("- BOOK: Book a crop procurement slot", msg[0])
 
             # 2. Unregistered farmer greeting
-            unregistered_phone = f"94{uuid.uuid4().int % 10**8:08d}"
+            # Test greeting for unregistered phone without sending outbound SMS
+            # Temporarily delete farmer record for self.phone so it behaves as unregistered
+            async with async_session_factory() as db:
+                await db.execute(text("DELETE FROM farmers WHERE phone = :p"), {"p": self.phone})
+                await db.commit()
             try:
                 resp_unreg = await client.post(
                     "/sms/incoming",
@@ -247,7 +262,7 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
                         "event": "sms:received",
                         "payload": {
                             "messageId": str(uuid.uuid4()),
-                            "sender": unregistered_phone,
+                            "sender": self.phone,
                             "message": "namaste",
                         },
                     },
@@ -260,7 +275,7 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
                                 "SELECT content FROM sms_messages WHERE phone = :p AND direction = 'outgoing' "
                                 "ORDER BY created_at DESC LIMIT 1"
                             ),
-                            {"p": unregistered_phone},
+                            {"p": self.phone},
                         )
                     ).first()
                     self.assertIsNotNone(msg)
@@ -270,10 +285,11 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
             finally:
                 async with async_session_factory() as db:
                     await db.execute(
-                        text("DELETE FROM sms_messages WHERE phone = :p"), {"p": unregistered_phone}
-                    )
-                    await db.execute(
-                        text("DELETE FROM sms_sessions WHERE phone = :p"), {"p": unregistered_phone}
+                        text(
+                            "INSERT INTO farmers (id, farmer_id, phone, name, is_active, is_verified, created_at) "
+                            "VALUES (:id, :fid, :phone, 'SMS Farmer', true, true, now())"
+                        ),
+                        {"id": self.farmer_id, "fid": f"F-{self.test_prefix}", "phone": self.phone},
                     )
                     await db.commit()
 

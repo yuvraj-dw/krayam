@@ -134,6 +134,7 @@ class BookingResponse(BaseModel):
     quantity: float
     unit: str
     expected_date: date
+    is_walk_in: bool = False
     status: BookingStatus
     created_at: datetime
     updated_at: datetime

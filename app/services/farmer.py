@@ -1,6 +1,7 @@
+import contextlib
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import ConflictError, NotFoundError
@@ -16,6 +17,81 @@ def generate_farmer_id() -> str:
 
 
 class FarmerService:
+    async def search(self, db: AsyncSession, query: str, limit: int = 20) -> list[Farmer]:
+        """Search farmers by phone, farmer_id, or name."""
+        q_clean = query.strip()
+        pattern = f"%{q_clean}%"
+        conditions = [
+            Farmer.name.ilike(pattern),
+            Farmer.farmer_id.ilike(pattern),
+            Farmer.phone.ilike(pattern),
+        ]
+        with contextlib.suppress(Exception):
+            normalized = normalize_phone(q_clean)
+            if normalized and normalized != q_clean:
+                conditions.append(Farmer.phone.ilike(f"%{normalized}%"))
+
+        result = await db.execute(
+            select(Farmer)
+            .where(or_(*conditions))
+            .order_by(Farmer.created_at.desc())
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def register_walk_in(
+        self,
+        db: AsyncSession,
+        *,
+        name: str,
+        phone: str,
+        village: str | None = None,
+        district: str | None = None,
+        state: str | None = None,
+        pincode: str | None = None,
+    ) -> tuple[Farmer, bool]:
+        """Register a walk-in farmer. Returns (farmer, created)."""
+        normalized = normalize_phone(phone)
+        existing = await self.get_by_phone(db, normalized)
+        if existing:
+            return existing, False
+
+        latitude = None
+        longitude = None
+        dist = district
+        st = state
+        if pincode or village:
+            resolved = await location_service.resolve(
+                pincode=pincode,
+                village=village,
+                district=district,
+                state=state,
+            )
+            if resolved:
+                latitude = resolved.latitude
+                longitude = resolved.longitude
+                dist = dist or resolved.district
+                st = st or resolved.state
+
+        farmer_id = f"F-{uuid.uuid4().hex[:8].upper()}"
+        farmer = Farmer(
+            phone=normalized,
+            name=name,
+            village=village,
+            district=dist,
+            state=st,
+            pincode=pincode,
+            latitude=latitude,
+            longitude=longitude,
+            farmer_id=farmer_id,
+            is_verified=True,
+            is_active=True,
+        )
+        db.add(farmer)
+        await db.commit()
+        await db.refresh(farmer)
+        return farmer, True
+
     async def register(self, db: AsyncSession, phone: str, data: FarmerRegisterRequest) -> Farmer:
         """Register a new farmer."""
         normalized = normalize_phone(phone)

@@ -30,6 +30,7 @@ class BookingService:
         unit: str = "quintal",
         centre_id: uuid.UUID | None = None,
         slot_id: uuid.UUID | None = None,
+        is_walk_in: bool = False,
         client_event_id: uuid.UUID | None = None,
     ) -> Booking:
         if quantity <= 0:
@@ -39,7 +40,7 @@ class BookingService:
 
         if slot_id:
             await self._validate_slot(db, slot_id, expected_date)
-        elif centre_id:
+        elif centre_id and not is_walk_in:
             await self._validate_slot_for_centre(db, centre_id, expected_date)
 
         booking = Booking(
@@ -51,6 +52,7 @@ class BookingService:
             quantity=quantity,
             unit=unit,
             expected_date=expected_date,
+            is_walk_in=is_walk_in,
             status=BookingStatus.CONFIRMED,
         )
         db.add(booking)
@@ -69,6 +71,7 @@ class BookingService:
                 "quantity": float(booking.quantity),
                 "unit": booking.unit,
                 "expected_date": booking.expected_date.isoformat(),
+                "is_walk_in": is_walk_in,
             },
             centre_id=booking.centre_id,
             farmer_id=booking.farmer_id,
@@ -271,6 +274,7 @@ class BookingService:
                     "quantity": float(b.quantity),
                     "unit": b.unit,
                     "expected_date": b.expected_date,
+                    "is_walk_in": b.is_walk_in,
                     "status": b.status,
                     "created_at": b.created_at,
                 }

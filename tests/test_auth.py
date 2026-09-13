@@ -7,12 +7,21 @@ from sqlalchemy import text
 from app.database import async_session_factory, engine
 from app.main import app
 from app.services.auth import auth_service
+from app.services.sms_gate import sms_gate_client
+from unittest.mock import patch, AsyncMock
 
 
 class TestAuth(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.phone = "9876543210"
-        self.norm_phone = "9876543210"
+        self.phone = "8770578818"
+        self.norm_phone = "8770578818"
+        self.mock_send_sms = AsyncMock(return_value="mock_msg_id")
+        self.sms_patcher = patch.object(
+            sms_gate_client,
+            "send_sms",
+            self.mock_send_sms,
+        )
+        self.sms_patcher.start()
         async with async_session_factory() as db:
             await db.execute(text("DELETE FROM otps WHERE phone = :p"), {"p": self.norm_phone})
             await db.commit()
@@ -21,6 +30,7 @@ class TestAuth(unittest.IsolatedAsyncioTestCase):
         async with async_session_factory() as db:
             await db.execute(text("DELETE FROM otps WHERE phone = :p"), {"p": self.norm_phone})
             await db.commit()
+        self.sms_patcher.stop()
         await engine.dispose()
 
     async def test_send_otp_invalid_phone(self) -> None:

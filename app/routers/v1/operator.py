@@ -2,7 +2,8 @@ import hmac
 import uuid
 from datetime import date as date_type
 
-from fastapi import APIRouter, Depends, Header, Query
+from fastapi import APIRouter, Depends, Header, Query, Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -14,6 +15,7 @@ from app.models.operator import Operator
 from app.models.payment import PaymentStatus
 from app.models.queue import QueueEntry
 from app.schemas.analytics import AnalyticsSummary
+from app.schemas.farmer import FarmerResponse
 from app.schemas.operations import (
     CheckInRequest,
     EventResponse,
@@ -26,6 +28,8 @@ from app.schemas.operations import (
     ProcurementResponse,
     QueueEntryResponse,
     QueueSummary,
+    WalkInBookingRequest,
+    WalkInFarmerCreateRequest,
 )
 from app.schemas.operator import (
     OperatorLoginRequest,
@@ -33,9 +37,11 @@ from app.schemas.operator import (
     OperatorResponse,
     OperatorTokenResponse,
 )
+from app.schemas.procurement import BookingResponse
 from app.schemas.qr import QRCodeResponse, QRScanCheckInRequest
 from app.services.analytics import analytics_service
 from app.services.booking import booking_service
+from app.services.centre import centre_service
 from app.services.event import event_service
 from app.services.farmer import farmer_service
 from app.services.notification import notification_service
@@ -45,6 +51,7 @@ from app.services.payment import payment_service
 from app.services.procurement import procurement_service
 from app.services.qr import qr_service
 from app.services.queue import queue_service
+from app.services.slot import slot_service
 
 router = APIRouter(prefix="/operator", tags=["operator"])
 settings = get_settings()
@@ -444,3 +451,135 @@ async def get_operator_analytics(
     return await analytics_service.summary(
         db, centre_id=operator.centre_id, from_date=start_date, to_date=end_date
     )
+
+
+@router.get("/farmers/search", response_model=list[FarmerResponse])
+async def search_farmers(
+    q: str = Query(..., min_length=1, description="Search query: phone, farmer_id, or name"),
+    operator: Operator = Depends(get_current_operator),
+    db: AsyncSession = Depends(get_db),
+) -> list[FarmerResponse]:
+    farmers = await farmer_service.search(db, query=q, limit=20)
+    return [FarmerResponse.model_validate(f) for f in farmers]
+
+
+@router.post("/farmers", response_model=FarmerResponse)
+async def register_walk_in_farmer(
+    body: WalkInFarmerCreateRequest,
+    response: Response,
+    operator: Operator = Depends(get_current_operator),
+    db: AsyncSession = Depends(get_db),
+) -> FarmerResponse:
+    farmer, created = await farmer_service.register_walk_in(
+        db,
+        name=body.name,
+        phone=body.phone,
+        village=body.village,
+        district=body.district,
+        state=body.state,
+        pincode=body.pincode,
+    )
+    if created:
+        response.status_code = 201
+    else:
+        response.status_code = 200
+    return FarmerResponse.model_validate(farmer)
+
+
+@router.post("/walk-in-bookings", response_model=BookingResponse, status_code=201)
+async def create_walk_in_booking(
+    body: WalkInBookingRequest,
+    operator: Operator = Depends(get_current_operator),
+    db: AsyncSession = Depends(get_db),
+) -> BookingResponse:
+    farmer = await farmer_service.get_by_id(db, body.farmer_id)
+    expected_date = body.expected_date or date_type.today()
+
+    slot_id = body.slot_id
+    if slot_id:
+        slot = await slot_service.get_by_id(db, slot_id)
+        if slot.centre_id != operator.centre_id:
+            raise ValidationError("Selected slot does not belong to your centre")
+        if not slot.is_available or slot.date != expected_date:
+            raise ValidationError("Selected slot is not available for this date")
+        if slot.current_bookings >= slot.max_bookings:
+            raise ValidationError("Selected slot is at full capacity")
+    else:
+        available_slots = await slot_service.list_available(
+            db, operator.centre_id, on_date=expected_date
+        )
+        if available_slots:
+            slot_id = available_slots[0].id
+        else:
+            centre = await centre_service.get_by_id(db, operator.centre_id)
+            booked_count = await db.scalar(
+                select(func.count(Booking.id)).where(
+                    Booking.centre_id == operator.centre_id,
+                    Booking.expected_date == expected_date,
+                    Booking.status.notin_(
+                        [
+                            BookingStatus.CANCELLED,
+                            BookingStatus.EXPIRED,
+                            BookingStatus.NO_SHOW,
+                        ]
+                    ),
+                )
+            )
+            if centre.capacity and (booked_count or 0) >= centre.capacity:
+                raise ValidationError("Centre daily capacity reached for the selected date")
+
+    before = await outbox_service.max_id(db)
+    booking = await booking_service.create(
+        db,
+        farmer_id=farmer.id,
+        crop=body.crop,
+        quantity=body.quantity,
+        expected_date=expected_date,
+        unit=body.unit,
+        centre_id=operator.centre_id,
+        slot_id=slot_id,
+        is_walk_in=True,
+    )
+
+    await event_service.record(
+        db,
+        event_type="booking.confirmed",
+        entity_type="booking",
+        entity_id=booking.id,
+        actor_id=operator.id,
+        actor_type="operator",
+        data={
+            "booking_id": booking.booking_id,
+            "crop": booking.crop,
+            "quantity": float(booking.quantity),
+            "unit": booking.unit,
+            "expected_date": booking.expected_date.isoformat(),
+            "is_walk_in": True,
+        },
+    )
+
+    await outbox_service.emit(
+        db,
+        event_type="booking.confirmed",
+        entity_type="booking",
+        entity_id=booking.id,
+        centre_id=operator.centre_id,
+        farmer_id=booking.farmer_id,
+        actor_id=operator.id,
+        actor_type="operator",
+        data={
+            "booking_id": booking.booking_id,
+            "crop": booking.crop,
+            "quantity": float(booking.quantity),
+            "unit": booking.unit,
+            "expected_date": booking.expected_date.isoformat(),
+            "is_walk_in": True,
+        },
+    )
+
+    await notification_service.notify_booking_confirmed(db, booking, farmer)
+    await db.commit()
+    await db.refresh(booking)
+    await outbox_service.publish_after(db, centre_id=operator.centre_id, after=before)
+
+    return BookingResponse.model_validate(booking)

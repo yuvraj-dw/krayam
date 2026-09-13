@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from app.models.booking import BookingStatus
 from app.models.payment import PaymentStatus
 from app.models.queue import QueueStatus
+from app.schemas.procurement import BookingResponse
 
 
 class CheckInRequest(BaseModel):
@@ -107,10 +108,29 @@ class OperatorBookingItem(BaseModel):
     quantity: float
     unit: str
     expected_date: date
+    is_walk_in: bool = False
     status: BookingStatus
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class WalkInFarmerCreateRequest(BaseModel):
+    name: str
+    phone: str
+    village: str | None = None
+    district: str | None = None
+    state: str | None = None
+    pincode: str | None = None
+
+
+class WalkInBookingRequest(BaseModel):
+    farmer_id: UUID
+    crop: str
+    quantity: float = Field(..., gt=0)
+    unit: str = "quintal"
+    expected_date: date | None = None
+    slot_id: UUID | None = None
 
 
 class OperatorBookingListResponse(BaseModel):

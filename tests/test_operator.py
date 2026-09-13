@@ -4,6 +4,7 @@ import sys
 import unittest
 import uuid
 from datetime import date, timedelta
+from unittest.mock import AsyncMock, patch
 
 # Ensure repo root is on sys.path for direct script execution
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -16,6 +17,7 @@ from app.database import async_session_factory, engine
 from app.main import app
 from app.services.auth import auth_service
 from app.services.operator import operator_service
+from app.services.sms_gate import sms_gate_client
 
 # Reduce database query log verbosity during test runs
 engine.echo = False
@@ -35,6 +37,7 @@ class TestOperator(unittest.IsolatedAsyncioTestCase):
         self.tomorrow = date.today() + timedelta(days=1)
 
         async with async_session_factory() as db:
+            await db.execute(text("DELETE FROM farmers WHERE phone in ('8770578818', '+918770578818')"))
             await db.execute(
                 text(
                     "INSERT INTO centres (id, name, code, latitude, longitude, capacity, is_active, created_at) "
@@ -114,6 +117,14 @@ class TestOperator(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         async with async_session_factory() as db:
             await db.execute(
+                text("DELETE FROM notifications WHERE phone in (:p1, :p2, '+918770578818')"),
+                {"p1": self.op_phone, "p2": "+918770578818"},
+            )
+            await db.execute(
+                text("DELETE FROM sms_messages WHERE phone in (:p1, :p2, '+918770578818')"),
+                {"p1": self.op_phone, "p2": "+918770578818"},
+            )
+            await db.execute(
                 text("DELETE FROM outbox_events WHERE centre_id in (:ca, :cb)"),
                 {"ca": self.centre_a_id, "cb": self.centre_b_id},
             )
@@ -148,6 +159,7 @@ class TestOperator(unittest.IsolatedAsyncioTestCase):
                 {"ca": self.centre_a_id, "cb": self.centre_b_id},
             )
             await db.execute(text("DELETE FROM farmers WHERE id = :fid"), {"fid": self.farmer_id})
+            await db.execute(text("DELETE FROM farmers WHERE phone = '+918770578818'"))
             await db.commit()
         await engine.dispose()
 
@@ -607,6 +619,122 @@ class TestOperator(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(resp_b.status_code, 200)
             data_b = resp_b.json()
             self.assertEqual(str(data_b["centre_id"]), self.centre_b_id)
+
+    async def test_operator_farmer_search(self) -> None:
+        """Test GET /api/v1/operator/farmers/search matches by phone, farmer_id, and name."""
+        with patch.object(sms_gate_client, "send_sms", AsyncMock()):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # Search by name
+                resp_name = await client.get(
+                    "/api/v1/operator/farmers/search?q=Farmer Test", headers=self.headers_a
+                )
+                self.assertEqual(resp_name.status_code, 200)
+                data = resp_name.json()
+                self.assertIsInstance(data, list)
+                self.assertGreaterEqual(len(data), 1)
+                self.assertEqual(data[0]["name"], "Farmer Test")
+
+                # Search by farmer_id
+                resp_id = await client.get(
+                    f"/api/v1/operator/farmers/search?q=F-{self.test_prefix}",
+                    headers=self.headers_a,
+                )
+                self.assertEqual(resp_id.status_code, 200)
+                data_id = resp_id.json()
+                self.assertGreaterEqual(len(data_id), 1)
+                self.assertEqual(data_id[0]["farmer_id"], f"F-{self.test_prefix}")
+
+    async def test_operator_farmer_registration_new_and_existing(self) -> None:
+        """Test POST /api/v1/operator/farmers creates walk-in farmer or returns existing."""
+        test_phone = "8770578818"
+        with patch.object(sms_gate_client, "send_sms", AsyncMock()):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # First registration -> 201 Created
+                resp1 = await client.post(
+                    "/api/v1/operator/farmers",
+                    json={
+                        "name": "Walkin Ramesh",
+                        "phone": test_phone,
+                        "village": "Hoshangabad",
+                        "district": "Narmadapuram",
+                        "state": "Madhya Pradesh",
+                        "pincode": "461001",
+                    },
+                    headers=self.headers_a,
+                )
+                self.assertEqual(resp1.status_code, 201)
+                data1 = resp1.json()
+                self.assertEqual(data1["name"], "Walkin Ramesh")
+                self.assertIn("F-", data1["farmer_id"])
+                created_id = data1["id"]
+
+                # Subsequent registration with same phone -> 200 OK returning existing farmer
+                resp2 = await client.post(
+                    "/api/v1/operator/farmers",
+                    json={
+                        "name": "Walkin Ramesh Duplicate",
+                        "phone": test_phone,
+                    },
+                    headers=self.headers_a,
+                )
+                self.assertEqual(resp2.status_code, 200)
+                data2 = resp2.json()
+                self.assertEqual(data2["id"], created_id)
+                self.assertEqual(data2["name"], "Walkin Ramesh")
+
+    async def test_operator_walk_in_booking_creation(self) -> None:
+        """Test POST /api/v1/operator/walk-in-bookings creates booking with is_walk_in=True."""
+        with patch.object(sms_gate_client, "send_sms", AsyncMock()):
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://test"
+            ) as client:
+                # Register a walk-in farmer first using the mandatory phone 8770578818
+                resp_farmer = await client.post(
+                    "/api/v1/operator/farmers",
+                    json={
+                        "name": "Walkin Farmer Suresh",
+                        "phone": "8770578818",
+                        "village": "Pipariya",
+                    },
+                    headers=self.headers_a,
+                )
+                self.assertIn(resp_farmer.status_code, [200, 201])
+                farmer_data = resp_farmer.json()
+                farmer_uuid = farmer_data["id"]
+
+                # Create walk-in booking for today
+                resp_booking = await client.post(
+                    "/api/v1/operator/walk-in-bookings",
+                    json={
+                        "farmer_id": farmer_uuid,
+                        "crop": "Wheat",
+                        "quantity": 15.0,
+                        "unit": "quintal",
+                    },
+                    headers=self.headers_a,
+                )
+                self.assertEqual(resp_booking.status_code, 201)
+                booking_data = resp_booking.json()
+                self.assertTrue(booking_data["is_walk_in"])
+                self.assertEqual(booking_data["farmer_id"], farmer_uuid)
+                self.assertEqual(booking_data["centre_id"], self.centre_a_id)
+                self.assertEqual(booking_data["status"], "confirmed")
+                self.assertEqual(booking_data["quantity"], 15.0)
+
+                # Verify outbox has event for booking.confirmed
+                async with async_session_factory() as db:
+                    outbox_res = await db.execute(
+                        text(
+                            "SELECT event_type FROM outbox_events WHERE entity_id = :bid AND event_type = 'booking.confirmed'"
+                        ),
+                        {"bid": booking_data["id"]},
+                    )
+                    outbox_event = outbox_res.scalar_one_or_none()
+                    self.assertIsNotNone(outbox_event)
 
 
 if __name__ == "__main__":

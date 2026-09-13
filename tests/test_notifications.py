@@ -16,6 +16,8 @@ from app.main import app
 from app.models.notification import Notification
 from app.services.auth import auth_service
 from app.services.notification import _record_notification, notification_service
+from app.services.sms_gate import sms_gate_client
+from unittest.mock import patch, AsyncMock
 
 # Reduce database query log verbosity during test runs
 engine.echo = False
@@ -27,8 +29,16 @@ class TestNotifications(unittest.IsolatedAsyncioTestCase):
         self.test_prefix = f"TN{uuid.uuid4().hex[:6].upper()}"
         self.farmer_a_id = str(uuid.uuid4())
         self.farmer_b_id = str(uuid.uuid4())
-        self.phone_a = f"+9193{uuid.uuid4().int % 10**8:08d}"
-        self.phone_b = f"+9194{uuid.uuid4().int % 10**8:08d}"
+        self.phone_a = "8770578818"
+        self.phone_b = "8770578818"
+
+        self.mock_send_sms = AsyncMock(return_value="mock_msg_id")
+        self.sms_patcher = patch.object(
+            sms_gate_client,
+            "send_sms",
+            self.mock_send_sms,
+        )
+        self.sms_patcher.start()
 
         async with async_session_factory() as db:
             await db.execute(
@@ -77,6 +87,7 @@ class TestNotifications(unittest.IsolatedAsyncioTestCase):
                 {"fa": self.farmer_a_id, "fb": self.farmer_b_id},
             )
             await db.commit()
+        self.sms_patcher.stop()
         await engine.dispose()
 
     async def test_notifications_auth(self) -> None:
