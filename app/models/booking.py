@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, Enum, ForeignKey, Numeric, String, func
+from sqlalchemy import Boolean, Date, DateTime, Enum, ForeignKey, Numeric, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -62,6 +62,7 @@ class Booking(Base):
     quantity: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     unit: Mapped[str] = mapped_column(String(20), default="quintal")
     expected_date: Mapped[date] = mapped_column(Date, nullable=False)
+    is_walk_in: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     status: Mapped[BookingStatus] = mapped_column(
         Enum(BookingStatus, values_callable=enum_values),
         default=BookingStatus.PENDING,

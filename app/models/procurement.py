@@ -15,6 +15,8 @@ class Procurement(Base):
     procurement_id: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     booking_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("bookings.id"))
     accepted_quantity: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    unit_price: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False, default=0.0)
+    quality_grade: Mapped[str | None] = mapped_column(String(50), nullable=True)
     unit: Mapped[str] = mapped_column(String(20), default="quintal")
     quality_notes: Mapped[str | None] = mapped_column(Text)
     processing_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

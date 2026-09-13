@@ -39,6 +39,8 @@ class CentreCrop(Base):
     centre_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("centres.id"))
     crop_name: Mapped[str] = mapped_column(String(100), nullable=False)
     rate_per_unit: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    min_price_per_unit: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
+    max_price_per_unit: Mapped[float | None] = mapped_column(Numeric(10, 2), nullable=True)
     unit: Mapped[str] = mapped_column(String(20), default="quintal")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
