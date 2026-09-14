@@ -17,6 +17,20 @@ Krayam is an agricultural procurement platform that lets farmers sell their harv
 
 ---
 
+## Product Tour & Architecture Walkthrough
+
+https://github.com/user-attachments/assets/krayam-overview.mp4
+
+<p align="center">
+  <a href="assets/krayam-overview.mp4">
+    <img src="assets/krayam-poster.jpg" alt="Krayam Overview Video" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);" />
+  </a>
+  <br />
+  <em>Click image or download <b><a href="assets/krayam-overview.mp4">assets/krayam-overview.mp4</a></b> to watch the complete 42-second architecture & feature walkthrough video.</em>
+</p>
+
+---
+
 ## Key Capabilities & Highlights
 
 - **Dual Channel, Unified Business Engine:** Registration, booking, live queue, procurement, dynamic pricing, payment, and audit history function with 100% feature parity over both the REST API and plain SMS. An appointment booked via SMS immediately appears in the operator's queue, and changes at the centre dispatch instant SMS and in-app alerts.
