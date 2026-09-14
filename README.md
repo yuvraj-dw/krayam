@@ -21,7 +21,7 @@ Krayam is an agricultural procurement platform that lets farmers sell their harv
 
 - **Dual Channel, Unified Business Engine:** Registration, booking, live queue, procurement, dynamic pricing, payment, and audit history function with 100% feature parity over both the REST API and plain SMS. An appointment booked via SMS immediately appears in the operator's queue, and changes at the centre dispatch instant SMS and in-app alerts.
 - **Operator Walk-in System:** Mandi operators can search farmers on-the-spot (`GET /api/v1/operator/farmers/search`), register arriving farmers immediately (`POST /api/v1/operator/farmers`), and book walk-in procurement appointments (`POST /api/v1/operator/walk-in-bookings`) flagged with `is_walk_in: true` without advance slot reservations.
-- **Dynamic Quality-Based Crop Pricing:** Produce is valued using quality grading (`Grade A`, `Fair Average Quality`, etc.) and variable unit pricing validated against server-side crop price bounds ($\text{min\_price} \le \text{unit\_price} \le \text{max\_price}$). Payments are deterministically computed as $\text{accepted\_quantity} \times \text{unit\_price}$.
+- **Dynamic Quality-Based Crop Pricing:** Produce is valued using quality grading (`Grade A`, `Fair Average Quality`, etc.) and variable unit pricing validated against server-side crop price bounds (`min_price <= unit_price <= max_price`). Payments are deterministically computed as `accepted_quantity * unit_price`.
 - **Cryptographic Vector QR Passes & Public Web Vouchers:**
   - **Gate Passes (`/p/{booking_id}`):** Tamper-evident HMAC-SHA256 vector SVG QR gate passes viewable without login or app installation. Operators scan passes at the mandi gate (`POST /api/v1/operator/check-in/scan`) for instant verification.
   - **Delivery & Payment Receipts (`/r/{identifier}`):** Dedicated public settlement vouchers accessible by Payment ID, Procurement ID, or Booking ID, presenting the applied rate, grade, accepted quantity, and signed proof of payment.
@@ -270,7 +270,7 @@ All REST endpoints are rooted at **`/api/v1`**, complemented by public verificat
 | `POST` | `/api/v1/operator/procurements` | Operator JWT | Records accepted quantity, unit, quality grade, and validates `unit_price` bounds. |
 | `GET` | `/api/v1/operator/procurements/{id}/qr` | Operator JWT | Returns signed vector SVG QR procurement delivery receipt and payment slip. |
 | `GET` | `/api/v1/operator/procurements/{id}/review` | Operator JWT | Returns payment review payload with anti-fraud anomaly detection flags. |
-| `POST` | `/api/v1/operator/procurements/{id}/payment` | Operator JWT | Initiates payment calculated as $\text{accepted\_quantity} \times \text{unit\_price}$. |
+| `POST` | `/api/v1/operator/procurements/{id}/payment` | Operator JWT | Initiates payment calculated as `accepted_quantity * unit_price`. |
 | `GET` | `/api/v1/operator/payments` | Operator JWT | Lists payments for centre with anomaly warnings, date filtering, and pagination. |
 | `POST` | `/api/v1/operator/payments/{id}/verify` | Operator JWT | Operator verifies or rejects payment settlement after audit check. |
 | `GET` | `/api/v1/operator/analytics` | Operator JWT | Historical centre metrics (farmers served, tonnage, wait times, cancellations, payment totals). |
@@ -324,7 +324,7 @@ Farmers can text the gateway phone number with structured commands or conversati
 2. **Server-Side Price Range Enforcement:** Procurements validate that `min_price <= unit_price <= max_price`. Sub-MSP rates are rejected with `422 ValidationError`.
 3. **Constant-Time Cryptographic Equality:** All service keys and sensitive headers use `hmac.compare_digest` to eliminate timing side-channels.
 4. **Duplicate Payment Prevention:** Procurement payouts cannot be initiated more than once; concurrent requests are rejected with `409 Conflict`.
-5. **Deterministic Calculation:** Payout amounts are strictly computed on the backend ($\text{accepted\_quantity} \times \text{unit\_price}$), preventing client tampering.
+5. **Deterministic Calculation:** Payout amounts are strictly computed on the backend (`accepted_quantity * unit_price`), preventing client tampering.
 6. **Zero Phone Number Leakage:** Test phone numbers and production API secrets are strictly shielded from public documentation and source code.
 
 ---
