@@ -17,9 +17,17 @@ Krayam is an agricultural procurement platform that lets farmers sell their harv
 
 ---
 
-## Product Tour & Architecture Walkthrough
+## Product Tour & Walkthrough
 
-https://github.com/yuvraj-dw/krayam/releases/download/v1.0.0-assets/krayam-overview.mp4
+<p align="center">
+  <video src="assets/krayam-overview.mp4" controls="controls" width="100%" poster="assets/krayam-poster.jpg">
+    <a href="assets/krayam-overview.mp4">
+      <img src="assets/krayam-poster.jpg" alt="Krayam Overview Video" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);" />
+    </a>
+  </video>
+  <br />
+  <em>42-second comprehensive walkthrough covering natural-language SMS, cryptographic gate passes, walk-in management, dynamic quality pricing, and realtime settlements.</em>
+</p>
 
 ---
 
