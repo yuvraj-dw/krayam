@@ -5,8 +5,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.dependencies import get_current_operator, require_same_centre
 from app.exceptions import NotFoundError, ValidationError
 from app.models.centre import Centre
+from app.models.operator import Operator
 from app.schemas.analytics import AnalyticsForecast, AnalyticsSummary
 from app.services.analytics import analytics_service
 from app.services.centre import centre_service
@@ -27,8 +29,10 @@ async def analytics_summary(
     centre_id: uuid.UUID,
     from_date: date = Query(alias="from"),
     to_date: date = Query(alias="to"),
+    operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
 ) -> AnalyticsSummary:
+    require_same_centre(centre_id, operator.centre_id)
     await _get_centre(db, centre_id)
     if from_date > to_date:
         raise ValidationError("from must be on or before to")
@@ -41,8 +45,10 @@ async def analytics_summary(
 async def analytics_forecast(
     centre_id: uuid.UUID,
     target: date | None = Query(default=None, alias="date"),
+    operator: Operator = Depends(get_current_operator),
     db: AsyncSession = Depends(get_db),
 ) -> AnalyticsForecast:
+    require_same_centre(centre_id, operator.centre_id)
     await _get_centre(db, centre_id)
     target_date = target or datetime.now(timezone.utc).date()
     return await forecast_service.forecast_for_date(

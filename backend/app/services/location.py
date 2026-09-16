@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 import httpx
@@ -97,7 +98,8 @@ class LocationService:
 
         # 2. Try Nominatim with village + district
         if village:
-            result = self.geocode_village(village, district, state)
+            # Wrap synchronous geopy call to avoid blocking the event loop
+            result = await asyncio.to_thread(self.geocode_village, village, district, state)
             if result:
                 return result
 

@@ -1,0 +1,1 @@
+Built Krayam for Smart India Hackathon 2026: An agricultural procurement engine where farmers book mandi slots in plain Hindi/Hinglish via SMS, get signed HMAC vector QR passes, and receive verified digital payouts with zero smartphone required.

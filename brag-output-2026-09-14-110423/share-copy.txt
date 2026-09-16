@@ -1,0 +1,17 @@
+🌾 Meet Krayam — The Agricultural Procurement Platform Built for SIH 2026!
+
+Indian farmers shouldn't need a heavy, crash-prone app to sell their harvest. With Krayam, they can text in plain Hindi or Hinglish from any ₹999 basic phone:
+"Mujhe 25 quintal gehu bechna hai kal"
+
+What happens behind the scenes:
+1️⃣ Gemini NLP parses the intent and confirms the procurement slot in seconds.
+2️⃣ Instant Cryptographic Gate Pass: Farmers get an HMAC-SHA256 vector QR code pass at https://hizru.me/p/{booking_id} — zero login required.
+3️⃣ Walk-Ins Welcome: Arriving farmers without advance slots are searched and checked in on-the-spot (`is_walk_in = true`).
+4️⃣ Guaranteed Price Transparency: Dynamic quality-based pricing strictly enforces MSP bounds (min_price <= unit_price <= max_price), rejecting sub-MSP exploitation.
+5️⃣ Instant Settlement: Payouts are deterministically calculated and recorded with digital proof-of-payment receipts at https://hizru.me/r/{identifier}.
+6️⃣ Resilient Mandis: Real-time Server-Sent Events (SSE) stream arrivals live, and offline PWA sync keeps centres running through rural network blackouts.
+
+Watch the full launch walkthrough:
+🎥 brag-output-2026-09-14-110423/brag.mp4
+
+#SIH2026 #AgriTech #SmartIndiaHackathon #FastAPI #Gemini #FinTech #OpenSource

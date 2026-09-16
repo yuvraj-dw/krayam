@@ -75,6 +75,12 @@ class QueueService:
         return entry
 
     async def _next_position(self, db: AsyncSession, centre_id: uuid.UUID) -> int:
+        # Lock the Centre row to serialize queue position allocation
+        from app.models.centre import Centre
+        await db.execute(
+            select(Centre.id).where(Centre.id == centre_id).with_for_update()
+        )
+        
         result = await db.execute(
             select(QueueEntry.position)
             .where(

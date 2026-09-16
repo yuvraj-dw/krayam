@@ -1,0 +1,530 @@
+<!doctype html>
+<html lang="en" data-resolution="landscape">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #0f2913;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        color: #ffffff;
+      }
+
+      .clip {
+        position: absolute;
+        inset: 0;
+        width: 1920px;
+        height: 1080px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        padding: 60px;
+      }
+
+      /* Scene 1: Hook */
+      .phone-frame {
+        width: 760px;
+        background: #ffffff;
+        border-radius: 28px;
+        padding: 40px;
+        box-shadow: 0 25px 60px rgba(0, 0, 0, 0.45);
+        color: #1f2937;
+        display: flex;
+        flex-direction: column;
+        gap: 24px;
+        border: 2px solid #34d399;
+      }
+
+      .sms-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-bottom: 1px solid #e5e7eb;
+        padding-bottom: 16px;
+      }
+
+      .sms-bubble {
+        background: #1b5e20;
+        color: #ffffff;
+        padding: 24px 32px;
+        border-radius: 24px 24px 4px 24px;
+        font-size: 36px;
+        font-weight: 600;
+        line-height: 1.35;
+        align-self: flex-end;
+        box-shadow: 0 10px 20px rgba(27, 94, 32, 0.2);
+      }
+
+      .nlp-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
+        color: #065f46;
+        padding: 10px 20px;
+        border-radius: 9999px;
+        font-size: 20px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+      }
+
+      /* Scene 2: QR Pass */
+      .pass-card {
+        width: 680px;
+        background: #ffffff;
+        border-radius: 28px;
+        box-shadow: 0 30px 70px rgba(0, 0, 0, 0.5);
+        overflow: hidden;
+        border: 2px solid #10b981;
+        color: #1f2937;
+      }
+
+      .pass-header {
+        background: linear-gradient(135deg, #1b5e20 0%, #2e7d32 100%);
+        color: #ffffff;
+        padding: 32px 40px;
+        text-align: center;
+      }
+
+      .qr-area {
+        background: #f8fafc;
+        padding: 36px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 20px;
+        border-bottom: 2px dashed #cbd5e1;
+      }
+
+      .qr-box {
+        width: 260px;
+        height: 260px;
+        background: #ffffff;
+        border: 3px solid #1b5e20;
+        border-radius: 20px;
+        padding: 16px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.08);
+      }
+
+      .pass-grid {
+        padding: 28px 40px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        font-size: 22px;
+      }
+
+      .grid-item {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .grid-item span:first-child {
+        font-size: 16px;
+        color: #64748b;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .grid-item span:last-child {
+        font-weight: 700;
+        color: #0f172a;
+      }
+
+      /* Scene 3: Operator & Pricing */
+      .operator-layout {
+        display: grid;
+        grid-template-columns: 1fr 1.2fr;
+        gap: 40px;
+        width: 1400px;
+      }
+
+      .panel {
+        background: #ffffff;
+        border-radius: 24px;
+        padding: 36px;
+        color: #1f2937;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+      }
+
+      .payout-hero {
+        background: #ecfdf5;
+        border: 2px solid #059669;
+        border-radius: 20px;
+        padding: 30px;
+        text-align: center;
+        margin-top: 24px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .stamp {
+        display: inline-block;
+        border: 4px solid #059669;
+        color: #059669;
+        padding: 8px 24px;
+        border-radius: 12px;
+        font-size: 28px;
+        font-weight: 900;
+        letter-spacing: 2px;
+        transform: rotate(-5deg);
+        margin-top: 14px;
+      }
+
+      /* Scene 4: Outro */
+      .outro-logo {
+        font-size: 110px;
+        font-weight: 900;
+        letter-spacing: 4px;
+        color: #ffffff;
+        text-shadow: 0 10px 40px rgba(16, 185, 129, 0.4);
+      }
+
+      .outro-tagline {
+        font-size: 38px;
+        color: #a7f3d0;
+        font-weight: 500;
+        margin-top: 20px;
+        letter-spacing: 1px;
+      }
+
+      .pill-row {
+        display: flex;
+        gap: 20px;
+        margin-top: 48px;
+      }
+
+      .pill {
+        background: rgba(255, 255, 255, 0.12);
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        color: #ffffff;
+        padding: 14px 28px;
+        border-radius: 9999px;
+        font-size: 22px;
+        font-weight: 600;
+        backdrop-filter: blur(10px);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="20"
+      data-width="1920"
+      data-height="1080"
+    >
+      <!-- Audio Tracks -->
+      <audio
+        id="bgm"
+        data-start="0"
+        data-duration="20"
+        src="assets/music/track.mp3"
+        volume="0.8"
+      ></audio>
+
+      <!-- Scene 1: The SMS Hook (0s - 4.8s) -->
+      <div
+        id="scene1"
+        class="clip"
+        data-start="0"
+        data-duration="4.8"
+        data-track-index="1"
+      >
+        <div style="font-size: 42px; font-weight: 700; margin-bottom: 30px; color: #a7f3d0; letter-spacing: 1px;">
+          NO SMARTPHONE REQUIRED.
+        </div>
+        <div id="sms-phone" class="phone-frame">
+          <div class="sms-header">
+            <div style="display: flex; align-items: center; gap: 14px;">
+              <div style="width: 44px; height: 44px; border-radius: 50%; background: #065f46; display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 20px;">
+                F
+              </div>
+              <div>
+                <div style="font-size: 22px; font-weight: 700; color: #0f172a;">Farmer Ramesh</div>
+                <div style="font-size: 15px; color: #475569;">SMS Gateway • Standard Feature Phone</div>
+              </div>
+            </div>
+            <span class="nlp-tag">Gemini NLP 95%</span>
+          </div>
+
+          <div id="sms-bubble" class="sms-bubble">
+            "Mujhe 25 quintal wheat bechna hai kal"
+          </div>
+
+          <div style="font-size: 19px; color: #475569; display: flex; justify-content: space-between; border-top: 1px solid #f1f5f9; padding-top: 12px;">
+            <span>Parsed: <strong>Wheat • 25 Qtl • Tomorrow</strong></span>
+            <span style="color: #059669; font-weight: 700;">Intent: Direct Mandi Booking</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 2: Digital Vector QR Gate Pass (4.8s - 9.8s) -->
+      <div
+        id="scene2"
+        class="clip"
+        data-start="4.8"
+        data-duration="5.0"
+        data-track-index="1"
+      >
+        <div style="font-size: 42px; font-weight: 700; margin-bottom: 24px; color: #a7f3d0; letter-spacing: 1px;">
+          INSTANT SIGNED DIGITAL GATE PASS
+        </div>
+
+        <div id="pass-card" class="pass-card">
+          <div class="pass-header">
+            <h1 style="font-size: 32px; font-weight: 800; letter-spacing: 1px;">KRAYAM GATE PASS</h1>
+            <p style="font-size: 18px; margin-top: 6px; opacity: 0.95;">Booking ID: BK-8F32A • Status: Confirmed</p>
+          </div>
+
+          <div class="qr-area">
+            <div class="qr-box">
+              <svg viewBox="0 0 100 100" fill="#1b5e20" width="220" height="220">
+                <!-- QR visual matrix representation -->
+                <rect x="5" y="5" width="25" height="25" rx="4" />
+                <rect x="10" y="10" width="15" height="15" fill="#fff" />
+                <rect x="13" y="13" width="9" height="9" />
+                <rect x="70" y="5" width="25" height="25" rx="4" />
+                <rect x="75" y="10" width="15" height="15" fill="#fff" />
+                <rect x="78" y="13" width="9" height="9" />
+                <rect x="5" y="70" width="25" height="25" rx="4" />
+                <rect x="10" y="75" width="15" height="15" fill="#fff" />
+                <rect x="13" y="78" width="9" height="9" />
+                <rect x="36" y="10" width="8" height="8" />
+                <rect x="48" y="10" width="8" height="8" />
+                <rect x="36" y="24" width="16" height="8" />
+                <rect x="10" y="38" width="8" height="24" />
+                <rect x="24" y="44" width="16" height="8" />
+                <rect x="46" y="38" width="18" height="18" />
+                <rect x="72" y="38" width="12" height="12" />
+                <rect x="40" y="72" width="10" height="18" />
+                <rect x="60" y="65" width="14" height="14" />
+                <rect x="80" y="62" width="12" height="28" />
+              </svg>
+            </div>
+            <div style="display: flex; gap: 14px;">
+              <span class="nlp-tag" style="background: #f0fdf4; border-color: #86efac; font-size: 16px;">
+                🔒 HMAC-SHA256 Signed
+              </span>
+              <span class="nlp-tag" style="background: #f0fdf4; border-color: #86efac; font-size: 16px;">
+                🌐 hizru.me/p/BK-8F32A
+              </span>
+            </div>
+          </div>
+
+          <div class="pass-grid">
+            <div class="grid-item">
+              <span>Farmer</span>
+              <span>Ramesh Patel</span>
+            </div>
+            <div class="grid-item">
+              <span>Centre</span>
+              <span>Nashik Mandi Centre</span>
+            </div>
+            <div class="grid-item">
+              <span>Crop & Quantity</span>
+              <span>Wheat • 25.0 Quintal</span>
+            </div>
+            <div class="grid-item">
+              <span>Slot Date</span>
+              <span>Tomorrow (09:00 AM)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 3: Operator Quality Inspection & Payout (9.8s - 15.2s) -->
+      <div
+        id="scene3"
+        class="clip"
+        data-start="9.8"
+        data-duration="5.4"
+        data-track-index="1"
+      >
+        <div style="font-size: 40px; font-weight: 700; margin-bottom: 24px; color: #a7f3d0; letter-spacing: 1px;">
+          MANDI ARRIVAL & QUALITY-BASED PRICING
+        </div>
+
+        <div class="operator-layout">
+          <!-- Left Panel: Live Queue -->
+          <div class="panel">
+            <h2 style="font-size: 26px; font-weight: 800; border-bottom: 2px solid #f1f5f9; padding-bottom: 14px; margin-bottom: 20px;">
+              Operator Live Queue
+            </h2>
+            <div style="background: #f8fafc; border-radius: 16px; padding: 20px; border-left: 6px solid #10b981;">
+              <div style="font-size: 16px; color: #64748b; font-weight: 700;">ACTIVE ENTRY</div>
+              <div style="font-size: 32px; font-weight: 800; color: #0f172a; margin-top: 4px;">Queue Position #1</div>
+              <div style="font-size: 18px; color: #047857; font-weight: 700; margin-top: 6px;">
+                Status: Checked In • ETA: ~12 min
+              </div>
+            </div>
+
+            <div style="margin-top: 24px; display: flex; flex-direction: column; gap: 12px; font-size: 18px; color: #475569;">
+              <div>• Centre Multi-Tenant Scoping: <strong>Centre #104</strong></div>
+              <div>• Offline PWA Sync: <strong>Enabled</strong></div>
+              <div>• Live SSE Event Broadcast: <strong>Active</strong></div>
+            </div>
+          </div>
+
+          <!-- Right Panel: Quality Check & Payment -->
+          <div class="panel">
+            <h2 style="font-size: 26px; font-weight: 800; border-bottom: 2px solid #f1f5f9; padding-bottom: 14px; margin-bottom: 20px;">
+              Physical Inspection & Payout
+            </h2>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; font-size: 18px;">
+              <div>
+                <span style="color: #64748b; font-size: 15px; display: block;">Permitted MSP Bounds</span>
+                <strong>₹2,000 — ₹3,000 / Qtl</strong>
+              </div>
+              <div>
+                <span style="color: #475569; font-size: 15px; display: block; font-weight: 600;">Quality Assessed</span>
+                <strong style="color: #047857;">Grade A (Moisture 11.2%)</strong>
+              </div>
+              <div>
+                <span style="color: #475569; font-size: 15px; display: block; font-weight: 600;">Final Operator Price</span>
+                <strong style="color: #047857; font-size: 22px;">₹2,400 / Qtl</strong>
+              </div>
+              <div>
+                <span style="color: #64748b; font-size: 15px; display: block;">Accepted Net Quantity</span>
+                <strong style="font-size: 22px;">24.5 Quintal</strong>
+              </div>
+            </div>
+
+            <div id="payout-hero" class="payout-hero">
+              <div style="font-size: 16px; color: #047857; font-weight: 700; text-transform: uppercase;">
+                Final Payment Calculated
+              </div>
+              <div style="font-size: 48px; font-weight: 900; color: #065f46; margin: 4px 0;">
+                ₹58,800
+              </div>
+              <div style="font-size: 16px; color: #047857;">
+                (24.5 Quintal × ₹2,400 per Quintal)
+              </div>
+              <div id="verified-stamp" class="stamp">
+                PAYMENT CONFIRMED
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scene 4: Outro (15.2s - 20.0s) -->
+      <div
+        id="scene4"
+        class="clip"
+        data-start="15.2"
+        data-duration="4.8"
+        data-track-index="1"
+      >
+        <div id="outro-logo" class="outro-logo">
+          KRAYAM
+        </div>
+        <div id="outro-tagline" class="outro-tagline">
+          Fair, Resilient Agricultural Procurement for Every Farmer
+        </div>
+
+        <div class="pill-row">
+          <div class="pill">🌾 Feature Phone SMS & Gemini NLP</div>
+          <div class="pill">🔐 HMAC-SHA256 Vector QR Passes</div>
+          <div class="pill">⚡ Real-Time SSE Bus</div>
+          <div class="pill">📶 Offline Mandi PWA Sync</div>
+        </div>
+
+        <div style="margin-top: 50px; font-size: 20px; color: #6ee7b7; font-weight: 600; letter-spacing: 2px;">
+          SMART INDIA HACKATHON 2026
+        </div>
+      </div>
+    </div>
+
+    <script>
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      window.__timelines["main"] = tl;
+
+      // Scene 1: The SMS Hook (0s - 4.8s)
+      tl.from("#sms-phone", {
+        y: 80,
+        opacity: 0,
+        scale: 0.92,
+        duration: 0.9,
+        ease: "back.out(1.4)",
+      }, 0.2);
+
+      tl.from("#sms-bubble", {
+        scale: 0.8,
+        opacity: 0,
+        x: 40,
+        duration: 0.6,
+        ease: "power2.out",
+      }, 0.9);
+
+      // Scene 2: Digital Vector QR Gate Pass (4.8s - 9.8s)
+      tl.from("#pass-card", {
+        scale: 0.88,
+        opacity: 0,
+        y: 60,
+        duration: 0.8,
+        ease: "power3.out",
+      }, 5.0);
+
+      // Scene 3: Operator & Pricing (9.8s - 15.2s)
+      tl.from(".panel", {
+        y: 50,
+        opacity: 0,
+        stagger: 0.25,
+        duration: 0.8,
+        ease: "power2.out",
+      }, 10.0);
+
+      tl.from("#verified-stamp", {
+        scale: 2.2,
+        opacity: 0,
+        rotation: 20,
+        duration: 0.45,
+        ease: "bounce.out",
+      }, 12.0);
+
+      // Scene 4: Outro (15.2s - 20.0s)
+      tl.from("#outro-logo", {
+        scale: 1.2,
+        opacity: 0,
+        duration: 0.8,
+        ease: "power3.out",
+      }, 15.4);
+
+      tl.from("#outro-tagline", {
+        opacity: 0,
+        y: 20,
+        duration: 0.6,
+        ease: "power2.out",
+      }, 16.0);
+
+      tl.from(".pill", {
+        opacity: 0,
+        y: 30,
+        stagger: 0.12,
+        duration: 0.5,
+        ease: "power2.out",
+      }, 16.4);
+    </script>
+  </body>
+</html>

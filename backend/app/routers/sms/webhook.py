@@ -210,7 +210,7 @@ async def _handle_registration_flow(
             farmer = await farmer_service.register(db, phone, data)
             session.state = "idle"
             session.context = {}
-            session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+            # Do not expire the session so subsequent commands retain idempotency context
             return f"Registration complete! Your Farmer ID is {farmer.farmer_id}."
         else:
             session.state = "idle"

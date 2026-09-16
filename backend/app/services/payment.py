@@ -36,7 +36,10 @@ class PaymentService:
 
         booking = await booking_service.get_by_id(db, procurement.booking_id)
 
-        rate = float(procurement.unit_price) if procurement.unit_price else await self._applicable_rate(db, booking)
+        if procurement.unit_price is None:
+            raise ValidationError("Procurement unit price is missing")
+            
+        rate = float(procurement.unit_price)
         accepted = float(procurement.accepted_quantity)
         amount = round(accepted * rate, 2)
 
@@ -83,21 +86,6 @@ class PaymentService:
         )
         await db.commit()
         return payment
-
-    async def _applicable_rate(self, db: AsyncSession, booking) -> float:
-        if booking.centre_id:
-            result = await db.execute(
-                select(CentreCrop).where(
-                    CentreCrop.centre_id == booking.centre_id,
-                    CentreCrop.crop_name == booking.crop,
-                    CentreCrop.is_active.is_(True),
-                )
-            )
-            crop = result.scalar_one_or_none()
-            if crop and crop.rate_per_unit is not None:
-                return float(crop.rate_per_unit)
-        # ponytail: fallback default rate; reserve per-centre rate lookup for phase 11+
-        return 2500.0
 
     async def get_by_id(self, db: AsyncSession, payment_id: uuid.UUID) -> Payment:
         result = await db.execute(select(Payment).where(Payment.id == payment_id))
