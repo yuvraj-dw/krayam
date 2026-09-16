@@ -23,6 +23,29 @@ Krayam is an agricultural procurement platform that lets farmers sell their harv
   <img src="assets/krayam-preview.gif" alt="Krayam Architecture & Product Walkthrough" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);" />
 </p>
 
+> **Monorepo Structure:**
+> - `backend/`: Core FastAPI REST API, SMS conversation engine, real-time SSE event bus, Alembic migrations, test suite, and `requirements.txt`.
+> - `frontend-web/`: (Upcoming) Web PWA and mandi centre operator portal.
+> - `frontend-app/`: (Upcoming) Mobile app client for farmers.
+
+---
+
+## Quickstart (Backend)
+
+```bash
+cd backend
+pip install -r requirements.txt
+cp .env.example .env
+alembic upgrade head
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+To run all automated test suites:
+```bash
+cd backend
+python -m pytest tests/ -v
+```
+
 ---
 
 ## Key Capabilities & Highlights
