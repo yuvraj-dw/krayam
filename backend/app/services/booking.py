@@ -83,7 +83,14 @@ class BookingService:
     async def _validate_slot(
         self, db: AsyncSession, slot_id: uuid.UUID, expected_date: date
     ) -> None:
-        slot = await slot_service.get_by_id(db, slot_id)
+        # Lock slot row to serialize concurrent bookings for this slot
+        from app.models.slot import Slot
+        res = await db.execute(
+            select(Slot).where(Slot.id == slot_id).with_for_update()
+        )
+        slot = res.scalar_one_or_none()
+        if not slot:
+            raise NotFoundError("Slot not found")
         if not slot.is_available or slot.date != expected_date:
             raise ValidationError("Selected slot is not available")
         if slot.current_bookings >= slot.max_bookings:

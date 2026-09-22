@@ -1,5 +1,8 @@
+import json
 from functools import lru_cache
+from typing import Any
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -36,6 +39,24 @@ class Settings(BaseSettings):
     PUBLIC_URL: str = "https://hizru.me"
     DEBUG: bool = False
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000", "http://localhost:5173"]
+
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v: Any) -> list[str]:
+        if isinstance(v, list):
+            return [str(item).strip() for item in v if str(item).strip()]
+        if isinstance(v, str):
+            v_str = v.strip()
+            if v_str.startswith("[") and v_str.endswith("]"):
+                try:
+                    parsed = json.loads(v_str)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if str(item).strip()]
+                except json.JSONDecodeError:
+                    pass
+            # Comma-separated fallback
+            return [s.strip() for s in v_str.split(",") if s.strip()]
+        return ["http://localhost:3000", "http://localhost:5173"]
 
     # Natural-language SMS (Gemini via OpenAI-compatible endpoint)
     LLM_ENABLED: bool = False

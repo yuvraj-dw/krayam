@@ -36,8 +36,17 @@ class EventBus:
                 try:
                     queue.put_nowait(payload)
                 except asyncio.QueueFull:
-                    logger.debug(
-                        "Bus queue full for %s; dropping row (replay covers it)",
+                    # Drop oldest unread item so queue doesn't stay permanently stalled
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                    try:
+                        queue.put_nowait(payload)
+                    except asyncio.QueueFull:
+                        pass
+                    logger.warning(
+                        "Bus queue full for %s; dropped oldest event to prevent buffer exhaustion",
                         key,
                     )
 

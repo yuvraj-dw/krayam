@@ -13,8 +13,8 @@ from unittest.mock import patch, AsyncMock
 
 class TestAuth(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        self.phone = "8770578818"
-        self.norm_phone = "8770578818"
+        self.phone = f"91{uuid.uuid4().int % 100000000:08d}"
+        self.norm_phone = self.phone
         self.mock_send_sms = AsyncMock(return_value="mock_msg_id")
         self.sms_patcher = patch.object(
             sms_gate_client,

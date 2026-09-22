@@ -466,7 +466,14 @@ class QRService:
 
         safe_booking_id = html.escape(booking.booking_id)
         safe_farmer_name = html.escape(farmer.name)
-        safe_phone = html.escape(farmer.phone)
+        # Mask phone number for privacy: e.g. +91 9479669839 -> +91 XXXXXX9839
+        raw_phone = farmer.phone.strip()
+        if len(raw_phone) >= 10:
+            masked_phone = raw_phone[:-4]
+            masked_phone = "".join(["X" if c.isdigit() else c for c in masked_phone]) + raw_phone[-4:]
+        else:
+            masked_phone = raw_phone
+        safe_phone = html.escape(masked_phone)
         safe_crop = html.escape(booking.crop.title())
         safe_centre = html.escape(centre_name)
         safe_date = html.escape(str(booking.expected_date))

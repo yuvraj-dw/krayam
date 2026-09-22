@@ -1,7 +1,9 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+import collections
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from sqlalchemy import or_, select
@@ -19,6 +21,22 @@ from app.services.bus import bus
 from app.services.qr import qr_service
 
 settings = get_settings()
+
+# In-memory IP rate limiter for public gate pass and receipt routes (30 req / 60s window)
+_RATE_LIMIT_BUCKET: dict[str, collections.deque[float]] = collections.defaultdict(collections.deque)
+_RATE_LIMIT_WINDOW = 60.0
+_RATE_LIMIT_MAX = 30
+
+
+def check_public_rate_limit(request: Request) -> None:
+    client_ip = (request.client.host if request.client else "unknown")
+    now = datetime.now(timezone.utc).timestamp()
+    history = _RATE_LIMIT_BUCKET[client_ip]
+    while history and history[0] < now - _RATE_LIMIT_WINDOW:
+        history.popleft()
+    if len(history) >= _RATE_LIMIT_MAX:
+        raise HTTPException(status_code=429, detail="Too Many Requests. Please try again in a minute.")
+    history.append(now)
 
 
 @asynccontextmanager
@@ -53,9 +71,11 @@ from app.models.payment import Payment
 
 @app.get("/p/{booking_id}", response_class=HTMLResponse)
 async def public_gate_pass(
+    request: Request,
     booking_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse:
+    check_public_rate_limit(request)
     stmt = select(Booking).where(Booking.booking_id == booking_id.strip().upper())
     result = await db.execute(stmt)
     booking = result.scalar_one_or_none()
@@ -92,9 +112,11 @@ async def public_gate_pass(
 
 @app.get("/r/{identifier}", response_class=HTMLResponse)
 async def public_procurement_receipt(
+    request: Request,
     identifier: str,
     db: AsyncSession = Depends(get_db),
 ) -> HTMLResponse:
+    check_public_rate_limit(request)
     clean_id = identifier.strip()
 
     # Match by payment_id, procurement_id, or booking_id

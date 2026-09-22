@@ -7,12 +7,15 @@ from sqlalchemy import text
 
 from app.database import async_session_factory, engine
 from app.main import app
+from app.models.operator import Operator
+from app.services.operator import operator_service
 
 
 class TestAnalytics(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.test_prefix = f"TA{uuid.uuid4().hex[:6].upper()}"
         self.centre_id = str(uuid.uuid4())
+        self.operator_id = uuid.uuid4()
         async with async_session_factory() as db:
             await db.execute(
                 text(
@@ -25,10 +28,22 @@ class TestAnalytics(unittest.IsolatedAsyncioTestCase):
                     "code": f"AC-{self.test_prefix}",
                 },
             )
+            self.op = Operator(
+                id=self.operator_id,
+                name=f"Op-{self.test_prefix}",
+                phone=f"987{uuid.uuid4().int % 10000000:07d}",
+                password_hash="fakehash",
+                centre_id=uuid.UUID(self.centre_id),
+                is_active=True,
+            )
+            db.add(self.op)
             await db.commit()
+        self.token = operator_service.token_for(self.op)
+        self.headers = {"Authorization": f"Bearer {self.token}"}
 
     async def asyncTearDown(self) -> None:
         async with async_session_factory() as db:
+            await db.execute(text("DELETE FROM operators WHERE id = :oid"), {"oid": self.operator_id})
             await db.execute(text("DELETE FROM centres WHERE id = :cid"), {"cid": self.centre_id})
             await db.commit()
         await engine.dispose()
@@ -46,6 +61,7 @@ class TestAnalytics(unittest.IsolatedAsyncioTestCase):
                     "from": (today - timedelta(days=7)).isoformat(),
                     "to": today.isoformat(),
                 },
+                headers=self.headers,
             )
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
@@ -60,6 +76,7 @@ class TestAnalytics(unittest.IsolatedAsyncioTestCase):
                     "from": today.isoformat(),
                     "to": (today - timedelta(days=1)).isoformat(),
                 },
+                headers=self.headers,
             )
             self.assertEqual(resp_inv.status_code, 422)
 
@@ -67,6 +84,7 @@ class TestAnalytics(unittest.IsolatedAsyncioTestCase):
             resp_fc = await client.get(
                 "/api/v1/analytics/forecast",
                 params={"centre_id": self.centre_id, "date": today.isoformat()},
+                headers=self.headers,
             )
             self.assertEqual(resp_fc.status_code, 200)
             fc_data = resp_fc.json()
