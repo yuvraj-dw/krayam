@@ -9,6 +9,7 @@ from app.models.farmer import Farmer
 from app.schemas.farmer import FarmerRegisterRequest, FarmerUpdateRequest
 from app.services.location import location_service
 from app.utils.phone import normalize_phone
+from app.utils.security import hash_password
 
 
 def generate_farmer_id() -> str:
@@ -122,11 +123,12 @@ class FarmerService:
 
         farmer = Farmer(
             phone=normalized,
-            name=data.name,
-            village=data.village,
-            district=district,
-            state=state,
-            pincode=data.pincode,
+            name=data.name.strip(),
+            password_hash=hash_password(data.password),
+            village=data.village.strip() if data.village else None,
+            district=data.district.strip() if data.district else None,
+            state=data.state.strip() if data.state else None,
+            pincode=data.pincode.strip() if data.pincode else None,
             latitude=latitude,
             longitude=longitude,
             farmer_id=generate_farmer_id(),

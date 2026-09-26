@@ -1,11 +1,12 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class FarmerRegisterRequest(BaseModel):
     name: str
+    password: str = Field(min_length=6, max_length=128)
     village: str | None = None
     district: str | None = None
     state: str | None = None
