@@ -1,6 +1,3 @@
-import hashlib
-import hmac
-import os
 import uuid
 from datetime import date, datetime, time, timezone
 
@@ -19,27 +16,7 @@ from app.services.centre import centre_service
 from app.services.outbox import outbox_service
 from app.services.queue import queue_service
 from app.utils.phone import normalize_phone, validate_phone
-
-PBKDF2_ITERATIONS = 100_000
-
-
-def hash_password(password: str) -> str:
-    salt = os.urandom(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode(), salt, PBKDF2_ITERATIONS
-    )
-    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt.hex()}${digest.hex()}"
-
-
-def verify_password(password: str, stored: str) -> bool:
-    try:
-        _, iterations, salt_hex, digest_hex = stored.split("$")
-        salt = bytes.fromhex(salt_hex)
-        expected = bytes.fromhex(digest_hex)
-    except (ValueError, TypeError):
-        return False
-    computed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, int(iterations))
-    return hmac.compare_digest(computed, expected)
+from app.utils.security import hash_password, verify_password
 
 
 class OperatorService:
