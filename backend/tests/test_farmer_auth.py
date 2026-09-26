@@ -14,12 +14,12 @@ async def cleanup():
     async with async_session_factory() as db:
         await db.execute(
             text(
-                "DELETE FROM bookings WHERE farmer_id IN (SELECT id FROM farmers WHERE phone IN ('9479669839', '9479669838', '9479669837', '9479669830', '9479669831', '9479669832'))"
+                "DELETE FROM bookings WHERE farmer_id IN (SELECT id FROM farmers WHERE phone IN ('9479669839', '9479669838', '9479669837', '9479669830', '9479669831', '9479669832', '9479669833', '9479669834'))"
             )
         )
         await db.execute(
             text(
-                "DELETE FROM farmers WHERE phone IN ('9479669839', '9479669838', '9479669837', '9479669830', '9479669831', '9479669832')"
+                "DELETE FROM farmers WHERE phone IN ('9479669839', '9479669838', '9479669837', '9479669830', '9479669831', '9479669832', '9479669833', '9479669834')"
             )
         )
         await db.commit()
@@ -27,12 +27,12 @@ async def cleanup():
     async with async_session_factory() as db:
         await db.execute(
             text(
-                "DELETE FROM bookings WHERE farmer_id IN (SELECT id FROM farmers WHERE phone IN ('9479669839', '9479669838', '9479669837', '9479669830', '9479669831', '9479669832'))"
+                "DELETE FROM bookings WHERE farmer_id IN (SELECT id FROM farmers WHERE phone IN ('9479669839', '9479669838', '9479669837', '9479669830', '9479669831', '9479669832', '9479669833', '9479669834'))"
             )
         )
         await db.execute(
             text(
-                "DELETE FROM farmers WHERE phone IN ('9479669839', '9479669838', '9479669837', '9479669830', '9479669831', '9479669832')"
+                "DELETE FROM farmers WHERE phone IN ('9479669839', '9479669838', '9479669837', '9479669830', '9479669831', '9479669832', '9479669833', '9479669834')"
             )
         )
         await db.commit()
@@ -197,4 +197,34 @@ async def test_farmer_login_neither_password_nor_code(client: AsyncClient):
         json={"phone": "+919479669833"},
     )
     assert login_resp.status_code in (400, 422)
+
+
+@pytest.mark.asyncio
+async def test_farmer_login_deactivated_account(client: AsyncClient, db_session):
+    phone = "+919479669834"
+    pending_token = auth_service.create_access_token(f"pending:{phone}")
+
+    # Register
+    reg_resp = await client.post(
+        "/api/v1/auth/register",
+        json={"name": "Deactivated Farmer", "password": "Password999"},
+        headers={"Authorization": f"Bearer {pending_token}"},
+    )
+    assert reg_resp.status_code == 200
+
+    # Deactivate the farmer
+    await db_session.execute(
+        text("UPDATE farmers SET is_active = false WHERE phone = '9479669834'")
+    )
+    await db_session.commit()
+
+    # Attempt login
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"phone": phone, "password": "Password999"},
+    )
+    assert login_resp.status_code == 403
+    detail = login_resp.json().get("detail") or login_resp.json().get("error", {}).get("message", "")
+    assert "Farmer account is deactivated" in detail
+
 

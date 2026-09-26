@@ -108,6 +108,37 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                 {"p": self.phone},
             )
             await db.execute(text("DELETE FROM farmers WHERE phone = :p"), {"p": self.phone})
+            # Clean up any leftover test centres from previous aborted runs
+            await db.execute(
+                text(
+                    "DELETE FROM slots WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"
+                )
+            )
+            await db.execute(
+                text(
+                    "DELETE FROM centre_crops WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"
+                )
+            )
+            await db.execute(
+                text(
+                    "DELETE FROM operators WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"
+                )
+            )
+            await db.execute(
+                text(
+                    "DELETE FROM queue_entries WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"
+                )
+            )
+            await db.execute(
+                text(
+                    "DELETE FROM bookings WHERE centre_id IN (SELECT id FROM centres WHERE name LIKE 'Centre A E2E%')"
+                )
+            )
+            await db.execute(
+                text(
+                    "DELETE FROM centres WHERE name LIKE 'Centre A E2E%'"
+                )
+            )
             await db.commit()
 
             # Insert Centre A
@@ -306,6 +337,7 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
                     "pincode": "422001",
                     "latitude": 19.0,
                     "longitude": 74.0,
+                    "password": "TestPassword123",
                 },
             )
             self.assertEqual(reg_resp.status_code, 200)
@@ -548,10 +580,10 @@ class TestE2ELifecycle(unittest.IsolatedAsyncioTestCase):
             self.assertIn("procurement", dash_data)
 
             # Analytics query
-            today_str = str(date.today())
+            from_str = str(date.today() - timedelta(days=1))
             tomorrow_str = str(self.tomorrow)
             analytics_resp = await client.get(
-                f"/api/v1/operator/analytics?from={today_str}&to={tomorrow_str}",
+                f"/api/v1/operator/analytics?from={from_str}&to={tomorrow_str}",
                 headers=self.operator_headers,
             )
             self.assertEqual(analytics_resp.status_code, 200)
