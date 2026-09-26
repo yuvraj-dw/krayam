@@ -23,3 +23,10 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
     farmer_id: str | None = None
     is_registered: bool = False
+
+
+class FarmerLoginRequest(BaseModel):
+    phone: str
+    password: str | None = None
+    code: str | None = None
+

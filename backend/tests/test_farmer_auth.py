@@ -117,3 +117,84 @@ async def test_farmer_register_fails_with_short_password(client: AsyncClient):
         headers={"Authorization": f"Bearer {pending_token}"},
     )
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_farmer_login_with_valid_password(client: AsyncClient, db_session):
+    phone = "+919479669830"
+    pending_token = auth_service.create_access_token(f"pending:{phone}")
+
+    # Register
+    await client.post(
+        "/api/v1/auth/register",
+        json={"name": "Login Farmer", "password": "Password999"},
+        headers={"Authorization": f"Bearer {pending_token}"},
+    )
+
+    # Login with correct password
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"phone": phone, "password": "Password999"},
+    )
+    assert login_resp.status_code == 200
+    data = login_resp.json()
+    assert "access_token" in data
+    assert data["is_registered"] is True
+    assert data["farmer_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_farmer_login_with_invalid_password(client: AsyncClient, db_session):
+    phone = "+919479669831"
+    pending_token = auth_service.create_access_token(f"pending:{phone}")
+    await client.post(
+        "/api/v1/auth/register",
+        json={"name": "Login Farmer 2", "password": "Password999"},
+        headers={"Authorization": f"Bearer {pending_token}"},
+    )
+
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"phone": phone, "password": "WrongPassword"},
+    )
+    assert login_resp.status_code == 401
+    detail = login_resp.json().get("detail") or login_resp.json().get("error", {}).get("message", "")
+    assert "Invalid phone or password" in detail
+
+
+@pytest.mark.asyncio
+async def test_farmer_login_nonexistent_phone(client: AsyncClient):
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"phone": "+919999999999", "password": "Password999"},
+    )
+    assert login_resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_farmer_login_without_password_set(client: AsyncClient, db_session):
+    from app.services.farmer import farmer_service
+    farmer, _ = await farmer_service.register_walk_in(
+        db_session,
+        name="Walkin Only",
+        phone="+919479669832",
+    )
+    await db_session.commit()
+
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"phone": "+919479669832", "password": "SomePassword"},
+    )
+    assert login_resp.status_code == 401
+    detail = login_resp.json().get("detail") or login_resp.json().get("error", {}).get("message", "")
+    assert "No password set" in detail
+
+
+@pytest.mark.asyncio
+async def test_farmer_login_neither_password_nor_code(client: AsyncClient):
+    login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"phone": "+919479669833"},
+    )
+    assert login_resp.status_code in (400, 422)
+
