@@ -22,6 +22,7 @@ class Farmer(Base):
     latitude: Mapped[float | None] = mapped_column()
     longitude: Mapped[float | None] = mapped_column()
     farmer_id: Mapped[str | None] = mapped_column(String(50), unique=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
