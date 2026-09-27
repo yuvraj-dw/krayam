@@ -3,10 +3,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.utils.security import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
+
 
 class FarmerRegisterRequest(BaseModel):
     name: str
-    password: str = Field(min_length=6, max_length=128)
+    password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=MAX_PASSWORD_LENGTH)
     village: str | None = None
     district: str | None = None
     state: str | None = None

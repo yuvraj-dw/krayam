@@ -3,6 +3,8 @@ import hmac
 import os
 
 PBKDF2_ITERATIONS = 100_000
+MIN_PASSWORD_LENGTH = 6
+MAX_PASSWORD_LENGTH = 128
 
 
 def hash_password(password: str) -> str:

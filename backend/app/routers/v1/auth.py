@@ -43,6 +43,8 @@ async def verify_otp(body: OTPVerifyRequest, db: AsyncSession = Depends(get_db))
     await otp_service.verify_otp(db, normalized, body.code, purpose)
 
     if farmer:
+        if not farmer.is_active:
+            raise AuthorizationError("Farmer account is deactivated")
         token = auth_service.create_access_token(str(farmer.id))
         return TokenResponse(
             access_token=token,
@@ -94,6 +96,8 @@ async def login_farmer(
     # If code is provided, use OTP verification
     await otp_service.verify_otp(db, normalized, body.code, OTPPurpose.LOGIN if farmer else OTPPurpose.REGISTER)
     if farmer:
+        if not farmer.is_active:
+            raise AuthorizationError("Farmer account is deactivated")
         token = auth_service.create_access_token(str(farmer.id))
         return TokenResponse(
             access_token=token,

@@ -218,7 +218,7 @@ async def test_farmer_login_deactivated_account(client: AsyncClient, db_session)
     )
     await db_session.commit()
 
-    # Attempt login
+    # Attempt login with password
     login_resp = await client.post(
         "/api/v1/auth/login",
         json={"phone": phone, "password": "Password999"},
@@ -226,5 +226,27 @@ async def test_farmer_login_deactivated_account(client: AsyncClient, db_session)
     assert login_resp.status_code == 403
     detail = login_resp.json().get("detail") or login_resp.json().get("error", {}).get("message", "")
     assert "Farmer account is deactivated" in detail
+
+    # Attempt login via OTP on /auth/login
+    from datetime import datetime, timedelta, timezone
+
+    from app.models.farmer import OTP, OTPPurpose
+    otp = OTP(
+        phone="9479669834",
+        code="654321",
+        purpose=OTPPurpose.LOGIN,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+    )
+    db_session.add(otp)
+    await db_session.commit()
+
+    otp_login_resp = await client.post(
+        "/api/v1/auth/login",
+        json={"phone": phone, "code": "654321"},
+    )
+    assert otp_login_resp.status_code == 403
+    detail_otp = otp_login_resp.json().get("detail") or otp_login_resp.json().get("error", {}).get("message", "")
+    assert "Farmer account is deactivated" in detail_otp
+
 
 
