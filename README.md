@@ -15,6 +15,14 @@
 
 ---
 
+## Product Tour & Walkthrough
+
+<p align="center">
+  <img src="assets/krayam-preview.gif" alt="Krayam Architecture & Product Walkthrough" width="100%" style="border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.25);" />
+</p>
+
+---
+
 ## Repository Structure
 
 ```
