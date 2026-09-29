@@ -11,7 +11,7 @@
 
 **Smart India Hackathon 2026**
 
-**Krayam** is an intelligent agricultural procurement platform bridging rural mandi operations and farmers. It provides an omnichannel experience: farmers can book slots, receive digital gate passes, and track queue tokens through either a modern **React web app** or low-cost **GSM SMS** on basic feature phones. Mandi centre operators manage gate check-ins, record produce weighment, verify quality grades, and initiate direct bank payouts in real time.
+**Krayam** is a full-stack, AI-enabled agricultural procurement and mandi management platform. It empowers farmers with an intuitive, multi-lingual **web application** (React 19, TypeScript, Tailwind) and an inclusive **two-way GSM SMS interface** (with Google Gemini NLP intent extraction) to schedule procurement slots, generate digital QR gate passes, and track live queue positions. For mandi operators, Krayam provides a robust portal for fast gate check-ins, quality grading, produce weighment, dynamic MSP pricing, instant payment settlement, and offline resilience during rural network blackouts.
 
 ---
 
