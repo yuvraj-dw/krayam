@@ -1,6 +1,7 @@
 import unittest
 import uuid
 from datetime import date, timedelta
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from sqlalchemy import text
@@ -8,8 +9,8 @@ from sqlalchemy import text
 from app.database import async_session_factory, engine
 from app.main import app
 from app.services.bus import bus
+from app.services.sms_format import is_ignored_carrier_message
 from app.services.sms_gate import sms_gate_client
-from unittest.mock import patch, AsyncMock
 
 
 class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
@@ -340,6 +341,128 @@ class TestSMSWebhook(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(received["data"]["booking_id"], self.booking_code)
         finally:
             await bus.unsubscribe(scope, queue)
+
+    def test_is_ignored_carrier_message_patterns(self) -> None:
+        """Test pattern matcher for automated carrier notifications."""
+        # Expected matches
+        self.assertTrue(
+            is_ignored_carrier_message("Dear Customer, +919479669839 is now available to take calls.")
+        )
+        self.assertTrue(
+            is_ignored_carrier_message("Dear Customer, +918770578818 is now available to take calls")
+        )
+        self.assertTrue(
+            is_ignored_carrier_message("Dear Customer, 9479669839 is now available to take calls.")
+        )
+        self.assertTrue(
+            is_ignored_carrier_message("dear customer, +91 9479669839 is now available to take calls")
+        )
+        self.assertTrue(
+            is_ignored_carrier_message("Dear Customer: +91-9479669839 is now available to take calls.")
+        )
+        self.assertTrue(
+            is_ignored_carrier_message("+919479669839 is now available to take calls.")
+        )
+        self.assertTrue(
+            is_ignored_carrier_message("Dear Customer, +919479669839 is now available to take calls. Thank you.")
+        )
+
+        # Non-carrier / legitimate platform messages should NOT be ignored
+        self.assertFalse(is_ignored_carrier_message("HELP"))
+        self.assertFalse(is_ignored_carrier_message("BOOK"))
+        self.assertFalse(is_ignored_carrier_message("STATUS"))
+        self.assertFalse(is_ignored_carrier_message("REGISTER Ramesh"))
+        self.assertFalse(is_ignored_carrier_message("Wheat 20 quintal"))
+        self.assertFalse(is_ignored_carrier_message("Mujhe fasal bechni hai"))
+        self.assertFalse(is_ignored_carrier_message(""))
+        self.assertFalse(is_ignored_carrier_message(None))
+
+    async def test_sms_carrier_availability_notification_ignored_without_reply(self) -> None:
+        """Test that incoming carrier availability SMS notifications are ignored and never replied to."""
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            carrier_msg = "Dear Customer, +919479669839 is now available to take calls."
+            payload = {
+                "event": "sms:received",
+                "payload": {
+                    "messageId": str(uuid.uuid4()),
+                    "sender": self.phone,
+                    "message": carrier_msg,
+                },
+            }
+
+            resp = await client.post("/sms/incoming", json=payload)
+            self.assertEqual(resp.status_code, 200)
+
+            # SMS Gate send_sms must NOT be called (no reply sent)
+            self.mock_send_sms.assert_not_called()
+
+            # The message should be recorded in sms_messages for auditing
+            async with async_session_factory() as db:
+                incoming_msg = (
+                    await db.execute(
+                        text(
+                            "SELECT content FROM sms_messages WHERE phone = :p AND direction = 'incoming' "
+                            "ORDER BY created_at DESC LIMIT 1"
+                        ),
+                        {"p": self.phone},
+                    )
+                ).first()
+                self.assertIsNotNone(incoming_msg)
+                self.assertEqual(incoming_msg[0], carrier_msg)
+
+                # Ensure no outgoing message was logged in DB
+                outgoing_msg = (
+                    await db.execute(
+                        text(
+                            "SELECT content FROM sms_messages WHERE phone = :p AND direction = 'outgoing'"
+                        ),
+                        {"p": self.phone},
+                    )
+                ).first()
+                self.assertIsNone(outgoing_msg)
+
+            # Start active booking flow -> state becomes bk_crop
+            await client.post(
+                "/sms/incoming",
+                json={
+                    "event": "sms:received",
+                    "payload": {
+                        "messageId": str(uuid.uuid4()),
+                        "sender": self.phone,
+                        "message": "BOOK",
+                    },
+                },
+            )
+            # Reset mock counter after BOOK prompt reply
+            self.mock_send_sms.reset_mock()
+
+            # Now send carrier message during active conversation
+            resp_active = await client.post(
+                "/sms/incoming",
+                json={
+                    "event": "sms:received",
+                    "payload": {
+                        "messageId": str(uuid.uuid4()),
+                        "sender": self.phone,
+                        "message": "Dear Customer, +918770578818 is now available to take calls.",
+                    },
+                },
+            )
+            self.assertEqual(resp_active.status_code, 200)
+            self.mock_send_sms.assert_not_called()
+
+            # Ensure session state is STILL bk_crop
+            async with async_session_factory() as db:
+                sess = (
+                    await db.execute(
+                        text("SELECT state FROM sms_sessions WHERE phone = :p"),
+                        {"p": self.phone},
+                    )
+                ).first()
+                self.assertIsNotNone(sess)
+                self.assertEqual(sess[0], "bk_crop")
 
 
 if __name__ == "__main__":

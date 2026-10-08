@@ -64,3 +64,27 @@ def format_currency(amount: float) -> str:
             rest = rest[:-2]
         out = ",".join(groups + [last3])
     return ("-" if neg else "") + out
+
+
+_CARRIER_PATTERNS = [
+    # "Dear Customer, +91XXXXXXX is now available to take calls."
+    re.compile(
+        r"Dear\s+Customer\b.*?\bis\s+now\s+available\s+to\s+take\s+calls\b",
+        re.IGNORECASE,
+    ),
+    # Telecom missed-call / reachability alerts: "+91XXXXXXX is now available to take calls."
+    re.compile(
+        r"(?:\+?\d[\d\s-]{6,14}\d|\+?\d+)\s+is\s+now\s+available\s+to\s+take\s+calls\b",
+        re.IGNORECASE,
+    ),
+]
+
+
+def is_ignored_carrier_message(text: str | None) -> bool:
+    """Return True if the text is an automated carrier notification that should be ignored without reply."""
+    if not text:
+        return False
+    stripped = text.strip()
+    return any(p.search(stripped) is not None for p in _CARRIER_PATTERNS)
+
+

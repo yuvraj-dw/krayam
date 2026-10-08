@@ -20,3 +20,5 @@ Thumbs.db
 docs/
 *.bat
 brag*/
+readme-video/
+.playwright-mcp/

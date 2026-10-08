@@ -29,6 +29,7 @@ from app.services.slot import slot_service
 from app.services.sms_format import (
     format_currency,
     format_date,
+    is_ignored_carrier_message,
     parse_date,
     parse_int_selection,
     parse_positive_float,
@@ -400,6 +401,10 @@ async def _handle_command(
     """Process a command or continue an active conversation. Returns None when
     the message should be ignored (e.g. a spam/service notice)."""
     stripped = text.strip()
+    if is_ignored_carrier_message(stripped):
+        logger.info("Ignoring carrier notification in command handler from %s: %s", phone, stripped[:60])
+        return None
+
     upper_stripped = stripped.upper()
     command = stripped.split(maxsplit=1)[0].upper() if stripped else ""
 
@@ -789,6 +794,19 @@ async def handle_incoming_sms(request: Request) -> dict[str, str]:
     text = payload.message.strip()
 
     logger.info("Incoming SMS from %s: %s", phone, text[:50])
+
+    if is_ignored_carrier_message(text):
+        logger.info("Ignoring automated carrier notification from %s: %s", phone, text[:60])
+        async with async_session_factory() as db:
+            msg = SMSMessage(
+                phone=phone,
+                direction="incoming",
+                content=text,
+                message_id=payload.messageId,
+            )
+            db.add(msg)
+            await db.commit()
+        return {"status": "ignored"}
 
     # Log incoming message
     async with async_session_factory() as db:
