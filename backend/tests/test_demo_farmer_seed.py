@@ -84,13 +84,22 @@ class TestDemoFarmerSeed(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(me_data["name"], "Ramesh Patel")
             self.assertEqual(me_data["phone"], "9876543200")
 
+            resp_pass = await client.get("/p/BK-DEMO-UPCOMING")
+            self.assertEqual(resp_pass.status_code, 200)
+
+            resp_rcpt = await client.get("/r/PAY-DEMO-PAST")
+            self.assertEqual(resp_rcpt.status_code, 200)
+
         # Run again to ensure idempotency and prevent slot counter drift
         second_result = await seed_demo_farmer()
         self.assertEqual(second_result["phone"], "9876543200")
 
         async with async_session_factory() as db:
             slot_cnt = await db.scalar(
-                text("SELECT current_bookings FROM slots WHERE centre_id = :cid AND date = :dt"),
+                text(
+                    "SELECT current_bookings FROM slots "
+                    "WHERE centre_id = :cid AND date = :dt AND start_time = '10:00:00'"
+                ),
                 {
                     "cid": "11111111-1111-1111-1111-111111111111",
                     "dt": date.today() + timedelta(days=1),

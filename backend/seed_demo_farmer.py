@@ -28,6 +28,19 @@ async def clean_existing_demo_farmer(db: AsyncSession) -> None:
     """Purge prior demo farmer records cleanly and idempotently."""
     await db.execute(
         text(
+            "UPDATE slots SET current_bookings = GREATEST(current_bookings - 1, 0), is_available = true "
+            "WHERE id IN ("
+            "    SELECT slot_id FROM bookings WHERE slot_id IS NOT NULL AND ("
+            "        booking_id IN (:b1, :b2) OR farmer_id IN ("
+            "            SELECT id FROM farmers WHERE phone = :p OR farmer_id = :fid"
+            "        )"
+            "    )"
+            ")"
+        ),
+        {"b1": UPCOMING_BOOKING_ID, "b2": PAST_BOOKING_ID, "p": DEMO_PHONE, "fid": DEMO_FARMER_ID},
+    )
+    await db.execute(
+        text(
             "DELETE FROM payments WHERE payment_id = :pid "
             "OR farmer_id IN (SELECT id FROM farmers WHERE phone = :p OR farmer_id = :fid)"
         ),
@@ -168,6 +181,7 @@ async def _seed_with_session(db: AsyncSession) -> dict[str, str]:
             select(Slot).where(
                 Slot.centre_id == LASALGAON_CENTRE_ID,
                 Slot.date == tomorrow,
+                Slot.start_time == time(10, 0),
             )
         )
     ).scalars().first()
