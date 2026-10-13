@@ -1,13 +1,16 @@
 import asyncio
 import uuid
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, time, timedelta
 
 from sqlalchemy import text
+
 from app.database import async_session_factory
 from app.models.centre import Centre, CentreCrop
-from app.models.slot import Slot
 from app.models.operator import Operator
+from app.models.slot import Slot
 from app.services.operator import hash_password
+from seed_demo_farmer import seed_demo_farmer
+
 
 async def clean_and_seed():
     async with async_session_factory() as db:
@@ -192,6 +195,13 @@ async def clean_and_seed():
 
         await db.commit()
         print("Database seeded successfully with 4 Major Mandis, Crops, Slots, and Mandi Operators!")
+
+        print("3. Seeding demo showcase farmer (Ramesh Patel)...")
+        demo_farmer = await seed_demo_farmer(db)
+        print(
+            f"Demo farmer seeded: {demo_farmer['name']} "
+            f"({demo_farmer['phone']} / {demo_farmer['password']})"
+        )
 
 if __name__ == "__main__":
     import sys

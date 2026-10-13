@@ -1,10 +1,12 @@
 import unittest
+from datetime import date, timedelta
 
 import httpx
 from sqlalchemy import text
 
 from app.database import async_session_factory, engine
 from app.main import app
+from seed_data import clean_and_seed
 from seed_demo_farmer import seed_demo_farmer
 
 
@@ -82,6 +84,35 @@ class TestDemoFarmerSeed(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(me_data["name"], "Ramesh Patel")
             self.assertEqual(me_data["phone"], "9876543200")
 
-        # Run again to ensure idempotency
+        # Run again to ensure idempotency and prevent slot counter drift
         second_result = await seed_demo_farmer()
         self.assertEqual(second_result["phone"], "9876543200")
+
+        async with async_session_factory() as db:
+            slot_cnt = await db.scalar(
+                text("SELECT current_bookings FROM slots WHERE centre_id = :cid AND date = :dt"),
+                {
+                    "cid": "11111111-1111-1111-1111-111111111111",
+                    "dt": date.today() + timedelta(days=1),
+                },
+            )
+            self.assertEqual(slot_cnt, 1)
+
+    async def test_clean_and_seed_includes_demo_farmer(self) -> None:
+        await clean_and_seed()
+        async with async_session_factory() as db:
+            farmer_row = (
+                await db.execute(
+                    text("SELECT name, phone FROM farmers WHERE phone = '9876543200'")
+                )
+            ).first()
+            self.assertIsNotNone(farmer_row)
+            self.assertEqual(farmer_row[0], "Ramesh Patel")
+            self.assertEqual(farmer_row[1], "9876543200")
+
+            upcoming = (
+                await db.execute(
+                    text("SELECT booking_id FROM bookings WHERE booking_id = 'BK-DEMO-UPCOMING'")
+                )
+            ).first()
+            self.assertIsNotNone(upcoming)

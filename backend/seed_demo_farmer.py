@@ -2,7 +2,7 @@ import asyncio
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
@@ -180,13 +180,11 @@ async def _seed_with_session(db: AsyncSession) -> dict[str, str]:
             start_time=time(10, 0),
             end_time=time(12, 0),
             max_bookings=25,
-            current_bookings=1,
+            current_bookings=0,
             is_available=True,
         )
         db.add(slot)
         await db.flush()
-    else:
-        slot.current_bookings += 1
 
     # 1. Active Upcoming Booking (Tomorrow)
     upcoming_uuid = uuid.uuid4()
@@ -204,6 +202,21 @@ async def _seed_with_session(db: AsyncSession) -> dict[str, str]:
         status=BookingStatus.CONFIRMED,
     )
     db.add(upcoming_booking)
+    await db.flush()
+
+    # Recount slot.current_bookings to avoid counter drift
+    booking_count = await db.scalar(
+        select(func.count())
+        .select_from(Booking)
+        .where(
+            Booking.slot_id == slot.id,
+            Booking.status.notin_(
+                [BookingStatus.CANCELLED, BookingStatus.EXPIRED, BookingStatus.NO_SHOW]
+            ),
+        )
+    )
+    slot.current_bookings = int(booking_count or 0)
+    slot.is_available = slot.current_bookings < slot.max_bookings
 
     # 2. Past Completed Booking (3 days ago)
     past_date = date.today() - timedelta(days=3)
