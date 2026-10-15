@@ -30,8 +30,7 @@ krayam/
 ├── frontend/             # Farmer Web App & Mandi Operator Portal (React 19 + Vite + TypeScript + Tailwind)
 ├── backend/              # Core API Server (FastAPI + SQLAlchemy 2.0 Async + PostgreSQL + Alembic)
 │   ├── app/              # Routers, business services, models, and SMS webhook engine
-│   ├── alembic/          # Database migrations (001 through 006)
-│   └── tests/            # Automated test suite (52+ passing tests)
+│   └── alembic/          # Database migrations (001 through 006)
 ├── docs/                 # Architecture, security audit, and frontend integration guides
 └── docs/diagrams/        # Interactive SVG/HTML system architecture & workflow diagrams
 ```
@@ -61,11 +60,6 @@ pip install -r requirements.txt
 cp .env.example .env
 alembic upgrade head
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
-```
-
-Run test suite:
-```bash
-python -m pytest tests/ -v
 ```
 
 ### 2. Frontend Setup
